@@ -1,0 +1,194 @@
+@import '@xyflow/react/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 220 20% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+    --primary: 220 70% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 94%;
+    --secondary-foreground: 220 20% 10%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 10% 46%;
+    --accent: 220 14% 92%;
+    --accent-foreground: 220 20% 10%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 90%;
+    --input: 220 13% 90%;
+    --ring: 220 70% 50%;
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 220 10% 30%;
+    --sidebar-primary: 220 70% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 94%;
+    --sidebar-accent-foreground: 220 20% 10%;
+    --sidebar-border: 220 13% 90%;
+    --sidebar-ring: 220 70% 50%;
+
+    /* Workflow-specific tokens */
+    --canvas-bg: 220 14% 96%;
+    --canvas-grid: 220 13% 88%;
+    --node-bg: 0 0% 100%;
+    --node-border: 220 13% 88%;
+    --node-selected: 220 70% 50%;
+    --node-shadow: 220 30% 80%;
+
+    /* Category colors */
+    --trigger-color: 142 60% 45%;
+    --ai-color: 262 60% 55%;
+    --voice-color: 200 70% 50%;
+    --video-color: 340 65% 55%;
+    --social-color: 45 90% 52%;
+    --logic-color: 25 80% 52%;
+    --utility-color: 220 14% 55%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(220 70% 50%), hsl(262 60% 55%));
+    --shadow-soft: 0 1px 3px 0 hsl(220 30% 80% / 0.3), 0 1px 2px -1px hsl(220 30% 80% / 0.3);
+    --shadow-md: 0 4px 6px -1px hsl(220 30% 80% / 0.2), 0 2px 4px -2px hsl(220 30% 80% / 0.2);
+    --shadow-lg: 0 10px 25px -3px hsl(220 30% 80% / 0.25), 0 4px 10px -4px hsl(220 30% 80% / 0.15);
+    --shadow-glow: 0 0 20px -3px hsl(220 70% 50% / 0.25);
+  }
+
+  .dark {
+    --background: 224 30% 7%;
+    --foreground: 220 14% 92%;
+    --card: 224 25% 10%;
+    --card-foreground: 220 14% 92%;
+    --popover: 224 25% 10%;
+    --popover-foreground: 220 14% 92%;
+    --primary: 220 70% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 224 20% 15%;
+    --secondary-foreground: 220 14% 92%;
+    --muted: 224 20% 14%;
+    --muted-foreground: 220 10% 55%;
+    --accent: 224 20% 16%;
+    --accent-foreground: 220 14% 92%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 224 15% 18%;
+    --input: 224 15% 18%;
+    --ring: 220 70% 55%;
+
+    --sidebar-background: 224 25% 8%;
+    --sidebar-foreground: 220 10% 65%;
+    --sidebar-primary: 220 70% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 224 20% 14%;
+    --sidebar-accent-foreground: 220 14% 92%;
+    --sidebar-border: 224 15% 16%;
+    --sidebar-ring: 220 70% 55%;
+
+    --canvas-bg: 224 28% 6%;
+    --canvas-grid: 224 20% 12%;
+    --node-bg: 224 25% 11%;
+    --node-border: 224 15% 18%;
+    --node-selected: 220 70% 55%;
+    --node-shadow: 224 30% 5%;
+
+    --trigger-color: 142 55% 48%;
+    --ai-color: 262 55% 60%;
+    --voice-color: 200 65% 55%;
+    --video-color: 340 60% 58%;
+    --social-color: 45 85% 55%;
+    --logic-color: 25 75% 55%;
+    --utility-color: 220 14% 60%;
+
+    --shadow-soft: 0 1px 3px 0 hsl(224 30% 3% / 0.5), 0 1px 2px -1px hsl(224 30% 3% / 0.5);
+    --shadow-md: 0 4px 6px -1px hsl(224 30% 3% / 0.4), 0 2px 4px -2px hsl(224 30% 3% / 0.4);
+    --shadow-lg: 0 10px 25px -3px hsl(224 30% 3% / 0.5), 0 4px 10px -4px hsl(224 30% 3% / 0.3);
+    --shadow-glow: 0 0 20px -3px hsl(220 70% 55% / 0.3);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  .node-card {
+    @apply rounded-xl border border-[hsl(var(--node-border))] bg-[hsl(var(--node-bg))] transition-all duration-200;
+    box-shadow: var(--shadow-soft);
+  }
+  .node-card:hover {
+    box-shadow: var(--shadow-md);
+  }
+  .node-card.selected {
+    border-color: hsl(var(--node-selected));
+    box-shadow: var(--shadow-glow);
+  }
+  .canvas-bg {
+    background-color: hsl(var(--canvas-bg));
+    background-image: radial-gradient(circle, hsl(var(--canvas-grid)) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .panel-section {
+    @apply rounded-xl border bg-card p-4;
+    box-shadow: var(--shadow-soft);
+  }
+  .workflow-card {
+    @apply rounded-xl border bg-card p-5 transition-all duration-200 cursor-pointer;
+    box-shadow: var(--shadow-soft);
+  }
+  .workflow-card:hover {
+    box-shadow: var(--shadow-md);
+    @apply border-primary/30;
+  }
+  .gradient-text {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}
+
+/* React Flow overrides */
+.react-flow__background {
+  background-color: hsl(var(--canvas-bg)) !important;
+}
+.react-flow__minimap {
+  @apply rounded-lg border bg-card !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.react-flow__controls {
+  @apply rounded-lg border bg-card !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.react-flow__controls-button {
+  @apply border-border bg-card text-foreground !important;
+}
+.react-flow__controls-button:hover {
+  @apply bg-accent !important;
+}
+.react-flow__edge-path {
+  stroke: hsl(var(--muted-foreground)) !important;
+  stroke-width: 2 !important;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: hsl(var(--primary)) !important;
+}
+.react-flow__handle {
+  @apply border-2 border-border bg-card !important;
+  width: 10px !important;
+  height: 10px !important;
+}
+.react-flow__handle:hover {
+  @apply bg-primary border-primary !important;
+}

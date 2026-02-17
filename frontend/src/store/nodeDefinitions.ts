@@ -1,0 +1,320 @@
+import { NodeDefinition } from '@/types/workflow';
+
+export const nodeDefinitions: NodeDefinition[] = [
+  // ─── TRIGGERS ──────────────────────────────────────
+  {
+    type: 'manual-trigger',
+    category: 'trigger',
+    title: 'Manual Trigger',
+    description: 'Start workflow manually',
+    icon: 'Play',
+    inputs: [],
+    outputs: ['output'],
+    fields: [],
+  },
+  {
+    type: 'schedule-trigger',
+    category: 'trigger',
+    title: 'Schedule',
+    description: 'Run on a schedule',
+    icon: 'Clock',
+    inputs: [],
+    outputs: ['output'],
+    fields: [
+      { name: 'cron', label: 'Cron Expression', type: 'text', placeholder: '0 9 * * *', help: 'Standard cron expression (min hour dom mon dow)' },
+      { name: 'timezone', label: 'Timezone', type: 'select', options: ['UTC', 'US/Eastern', 'US/Pacific', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo'], defaultValue: 'UTC' },
+    ],
+  },
+  {
+    type: 'webhook-trigger',
+    category: 'trigger',
+    title: 'Webhook',
+    description: 'Trigger via HTTP webhook',
+    icon: 'Webhook',
+    inputs: [],
+    outputs: ['output'],
+    fields: [
+      { name: 'method', label: 'HTTP Method', type: 'select', options: ['POST', 'GET', 'PUT'], defaultValue: 'POST' },
+      { name: 'path', label: 'Path', type: 'text', placeholder: '/my-webhook', help: 'URL path for this webhook' },
+    ],
+  },
+
+  // ─── AI ────────────────────────────────────────────
+  {
+    type: 'generate-script',
+    category: 'ai',
+    title: 'Generate Script',
+    description: 'Generate text with AI',
+    icon: 'Sparkles',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'provider', label: 'Provider', type: 'select', options: ['openai', 'anthropic'], defaultValue: 'openai', help: 'Configure API key in Settings' },
+      { name: 'model', label: 'Model', type: 'select', options: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'claude-sonnet-4-20250514', 'claude-3-haiku-20240307'], defaultValue: 'gpt-4o' },
+      { name: 'prompt', label: 'Prompt', type: 'textarea', placeholder: 'Write a script about...', required: true },
+      { name: 'systemPrompt', label: 'System Prompt', type: 'textarea', placeholder: 'You are a creative scriptwriter...' },
+      { name: 'temperature', label: 'Temperature', type: 'number', defaultValue: 0.7, help: '0-2, higher = more creative' },
+      { name: 'maxTokens', label: 'Max Tokens', type: 'number', defaultValue: 2048 },
+    ],
+  },
+  {
+    type: 'text-summarizer',
+    category: 'ai',
+    title: 'Text Summarizer',
+    description: 'Summarize text with AI',
+    icon: 'FileText',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'provider', label: 'Provider', type: 'select', options: ['openai', 'anthropic'], defaultValue: 'openai', help: 'Configure API key in Settings' },
+      { name: 'model', label: 'Model', type: 'select', options: ['gpt-4o-mini', 'gpt-4o', 'claude-3-haiku-20240307'], defaultValue: 'gpt-4o-mini' },
+      { name: 'style', label: 'Summary Style', type: 'select', options: ['Concise', 'Detailed', 'Bullet Points', 'Key Takeaways'], defaultValue: 'Concise' },
+      { name: 'maxLength', label: 'Max Length (words)', type: 'number', defaultValue: 150 },
+    ],
+  },
+  {
+    type: 'prompter',
+    category: 'ai',
+    title: 'Prompter',
+    description: 'Custom LLM prompt',
+    icon: 'MessageSquare',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'provider', label: 'Provider', type: 'select', options: ['openai', 'anthropic'], defaultValue: 'openai', help: 'Configure API key in Settings' },
+      { name: 'model', label: 'Model', type: 'select', options: ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-20250514', 'claude-3-haiku-20240307'], defaultValue: 'gpt-4o' },
+      { name: 'prompt', label: 'Prompt Template', type: 'textarea', placeholder: 'Given the following: {{input}}\n\nPlease...', required: true, help: 'Use {{input}} to reference incoming data' },
+      { name: 'temperature', label: 'Temperature', type: 'number', defaultValue: 0.5 },
+    ],
+  },
+
+  // ─── VOICE ─────────────────────────────────────────
+  {
+    type: 'text-to-speech',
+    category: 'voice',
+    title: 'Text to Speech',
+    description: 'Convert text to audio',
+    icon: 'Mic',
+    inputs: ['text'],
+    outputs: ['audio'],
+    fields: [
+      { name: 'provider', label: 'Provider', type: 'select', options: ['openai', 'elevenlabs'], defaultValue: 'openai', help: 'Configure API key in Settings' },
+      { name: 'voice', label: 'Voice', type: 'select', options: ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'], defaultValue: 'nova' },
+      { name: 'model', label: 'Model', type: 'select', options: ['tts-1', 'tts-1-hd'], defaultValue: 'tts-1', help: 'tts-1-hd provides higher quality audio' },
+      { name: 'text', label: 'Text', type: 'textarea', placeholder: 'Enter text to convert to speech...', help: 'Leave empty to use upstream input' },
+      { name: 'speed', label: 'Speed', type: 'number', defaultValue: 1.0 },
+      { name: 'stability', label: 'Stability', type: 'number', defaultValue: 0.5, help: 'Voice consistency — ElevenLabs only (0-1)' },
+    ],
+  },
+  {
+    type: 'voice-clone',
+    category: 'voice',
+    title: 'Voice Clone',
+    description: 'Clone a voice from sample',
+    icon: 'AudioLines',
+    inputs: ['sample'],
+    outputs: ['voice_id'],
+    fields: [
+      { name: 'name', label: 'Voice Name', type: 'text', placeholder: 'My Custom Voice', required: true },
+      { name: 'description', label: 'Description', type: 'text', placeholder: 'Male, warm, professional' },
+    ],
+  },
+
+  // ─── VIDEO ─────────────────────────────────────────
+  {
+    type: 'render-video',
+    category: 'video',
+    title: 'Render Video',
+    description: 'Compile media into video',
+    icon: 'Film',
+    inputs: ['audio', 'visuals'],
+    outputs: ['video'],
+    fields: [
+      { name: 'template', label: 'Template', type: 'select', options: ['Default', 'News Overlay', 'Podcast Wave', 'Slideshow', 'Subtitled'], defaultValue: 'Default' },
+      { name: 'resolution', label: 'Resolution', type: 'select', options: ['1080p', '720p', '4K', '9:16 Portrait'], defaultValue: '1080p' },
+      { name: 'format', label: 'Format', type: 'select', options: ['MP4', 'WebM', 'MOV'], defaultValue: 'MP4' },
+      { name: 'fps', label: 'FPS', type: 'number', defaultValue: 30 },
+    ],
+  },
+  {
+    type: 'clip-joiner',
+    category: 'video',
+    title: 'Clip Joiner',
+    description: 'Join multiple clips together',
+    icon: 'Clapperboard',
+    inputs: ['clips'],
+    outputs: ['video'],
+    fields: [
+      { name: 'transition', label: 'Transition', type: 'select', options: ['None', 'Crossfade', 'Wipe', 'Slide'], defaultValue: 'Crossfade' },
+      { name: 'transitionDuration', label: 'Transition Duration (s)', type: 'number', defaultValue: 0.5 },
+    ],
+  },
+
+  // ─── SOCIAL ────────────────────────────────────────
+  {
+    type: 'youtube-publisher',
+    category: 'social',
+    title: 'YouTube Publisher',
+    description: 'Upload video to YouTube',
+    icon: 'Youtube',
+    inputs: ['content'],
+    outputs: ['result'],
+    fields: [
+      { name: 'title', label: 'Video Title', type: 'text', placeholder: 'My Awesome Video', required: true },
+      { name: 'description', label: 'Description', type: 'textarea', placeholder: 'Video description...' },
+      { name: 'tags', label: 'Tags', type: 'text', placeholder: 'ai, tutorial, automation', help: 'Comma-separated tags' },
+      { name: 'visibility', label: 'Visibility', type: 'select', options: ['Public', 'Unlisted', 'Private'], defaultValue: 'Public' },
+    ],
+  },
+  {
+    type: 'tiktok-publisher',
+    category: 'social',
+    title: 'TikTok Publisher',
+    description: 'Upload video to TikTok',
+    icon: 'Music',
+    inputs: ['content'],
+    outputs: ['result'],
+    fields: [
+      { name: 'caption', label: 'Caption', type: 'textarea', placeholder: 'Check this out! #ai #automation', required: true },
+      { name: 'privacy', label: 'Privacy', type: 'select', options: ['Public', 'Friends', 'Private'], defaultValue: 'Public' },
+      { name: 'allowComments', label: 'Allow Comments', type: 'toggle', defaultValue: true },
+    ],
+  },
+  {
+    type: 'meta-publisher',
+    category: 'social',
+    title: 'Meta Publisher',
+    description: 'Post to Facebook/Instagram',
+    icon: 'Share2',
+    inputs: ['content'],
+    outputs: ['result'],
+    fields: [
+      { name: 'platform', label: 'Platform', type: 'select', options: ['Instagram', 'Facebook', 'Both'], defaultValue: 'Instagram' },
+      { name: 'caption', label: 'Caption', type: 'textarea', placeholder: 'Post caption...', required: true },
+      { name: 'scheduledAt', label: 'Schedule For', type: 'text', placeholder: 'Now or ISO datetime', help: 'Leave empty to post immediately' },
+    ],
+  },
+
+  // ─── LOGIC ─────────────────────────────────────────
+  {
+    type: 'if-else',
+    category: 'logic',
+    title: 'If/Else',
+    description: 'Conditional branching',
+    icon: 'GitBranch',
+    inputs: ['input'],
+    outputs: ['true', 'false'],
+    fields: [
+      { name: 'conditionType', label: 'Condition Type', type: 'select', options: ['expression', 'field_check'], defaultValue: 'field_check', help: 'How to evaluate the condition' },
+      { name: 'field', label: 'Field Name', type: 'text', placeholder: 'statusCode', help: 'Field from upstream data to check' },
+      { name: 'operator', label: 'Operator', type: 'select', options: ['equals', 'not_equals', 'contains', 'greater_than', 'less_than', 'exists', 'is_empty', 'is_truthy'], defaultValue: 'equals' },
+      { name: 'compareValue', label: 'Compare Value', type: 'text', placeholder: '200' },
+      { name: 'condition', label: 'Expression', type: 'text', placeholder: '{{input.value}} > 100', help: 'Used when condition type is "expression"' },
+    ],
+  },
+  {
+    type: 'loop',
+    category: 'logic',
+    title: 'Loop',
+    description: 'Iterate over items',
+    icon: 'Repeat',
+    inputs: ['items'],
+    outputs: ['item', 'done'],
+    fields: [
+      { name: 'maxIterations', label: 'Max Iterations', type: 'number', defaultValue: 100, help: 'Safety limit to prevent infinite loops' },
+    ],
+  },
+  {
+    type: 'delay',
+    category: 'logic',
+    title: 'Delay',
+    description: 'Wait before continuing',
+    icon: 'Timer',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'duration', label: 'Duration (seconds)', type: 'number', defaultValue: 5 },
+    ],
+  },
+  {
+    type: 'merge',
+    category: 'logic',
+    title: 'Merge',
+    description: 'Combine multiple inputs',
+    icon: 'GitMerge',
+    inputs: ['input1', 'input2'],
+    outputs: ['output'],
+    fields: [
+      { name: 'strategy', label: 'Merge Strategy', type: 'select', options: ['Wait All', 'First Wins', 'Append'], defaultValue: 'Wait All' },
+    ],
+  },
+
+  // ─── UTILITIES ─────────────────────────────────────
+  {
+    type: 'set-variable',
+    category: 'utility',
+    title: 'Set Variable',
+    description: 'Store or transform data',
+    icon: 'Variable',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'variableName', label: 'Variable Name', type: 'text', placeholder: 'myVar', required: true },
+      { name: 'value', label: 'Value', type: 'textarea', placeholder: '{{input.data}}' },
+    ],
+  },
+  {
+    type: 'http-request',
+    category: 'utility',
+    title: 'HTTP Request',
+    description: 'Make an HTTP request',
+    icon: 'Globe',
+    inputs: ['input'],
+    outputs: ['response'],
+    fields: [
+      { name: 'method', label: 'Method', type: 'select', options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], defaultValue: 'GET' },
+      { name: 'url', label: 'URL', type: 'text', placeholder: 'https://api.example.com/data', required: true },
+      { name: 'headers', label: 'Headers (JSON)', type: 'textarea', placeholder: '{"Authorization": "Bearer ..."}' },
+      { name: 'body', label: 'Body (JSON)', type: 'textarea', placeholder: '{"key": "value"}' },
+    ],
+  },
+  {
+    type: 'notification',
+    category: 'utility',
+    title: 'Notification',
+    description: 'Send a notification',
+    icon: 'Bell',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'channel', label: 'Channel', type: 'select', options: ['Email', 'Slack', 'Discord', 'In-App'], defaultValue: 'Email' },
+      { name: 'message', label: 'Message', type: 'textarea', placeholder: 'Workflow completed: {{input.summary}}', required: true },
+      { name: 'recipient', label: 'Recipient', type: 'text', placeholder: 'user@example.com' },
+    ],
+  },
+  {
+    type: 'logger',
+    category: 'utility',
+    title: 'Logger',
+    description: 'Log data for debugging',
+    icon: 'ScrollText',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'label', label: 'Log Label', type: 'text', placeholder: 'debug-step-1' },
+      { name: 'logLevel', label: 'Level', type: 'select', options: ['info', 'warn', 'error', 'debug'], defaultValue: 'info' },
+    ],
+  },
+];
+
+export const categoryLabels: Record<string, string> = {
+  trigger: 'Triggers',
+  ai: 'AI',
+  voice: 'Voice',
+  video: 'Video',
+  social: 'Social',
+  logic: 'Logic',
+  utility: 'Utilities',
+};
+
+export const categoryOrder = ['trigger', 'ai', 'voice', 'video', 'social', 'logic', 'utility'];
