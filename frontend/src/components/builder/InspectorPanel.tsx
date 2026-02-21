@@ -6,7 +6,11 @@ import { RunLogs } from './RunLogs';
 import { X, Settings2, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-export function InspectorPanel() {
+interface InspectorPanelProps {
+  onOpenEdlEditor?: (projectId: string) => void;
+}
+
+export function InspectorPanel({ onOpenEdlEditor }: InspectorPanelProps = {}) {
   const { selectedNodeId, getActiveWorkflow, inspectorTab, setInspectorTab, selectNode, runLog } = useWorkflowStore();
   const workflow = getActiveWorkflow();
   const selectedNode = workflow?.nodes.find(n => n.id === selectedNodeId);
@@ -42,7 +46,7 @@ export function InspectorPanel() {
 
             <TabsContent value="config" className="flex-1 overflow-y-auto p-0 m-0">
               {selectedNode ? (
-                <NodeConfigForm node={selectedNode} />
+                <NodeConfigForm node={selectedNode} onOpenEdlEditor={onOpenEdlEditor} />
               ) : (
                 <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                   Select a node to configure

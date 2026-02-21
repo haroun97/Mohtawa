@@ -6,6 +6,11 @@ import authRoutes from "./routes/auth";
 import healthRoutes from "./routes/health";
 import workflowRoutes from "./routes/workflows";
 import settingsRoutes from "./routes/settings";
+import voiceProfileRoutes from "./routes/voiceProfiles";
+import storageRoutes from "./routes/storage";
+import mediaRoutes from "./routes/media";
+import projectRoutes from "./routes/projects";
+import renderRoutes from "./routes/renders";
 import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
@@ -57,6 +62,11 @@ app.use("/api/auth", authRoutes);
 app.use("/api/health", healthRoutes);
 app.use("/api/workflows", workflowRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/voice-profiles", voiceProfileRoutes);
+app.use("/api/storage", storageRoutes);
+app.use("/api/media", mediaRoutes);
+app.use("/api/projects", projectRoutes);
+app.use("/api/renders", renderRoutes);
 
 app.use(errorHandler);
 

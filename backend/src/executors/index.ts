@@ -1,8 +1,13 @@
 import { executeLLM } from "./llm";
 import { executeTTS } from "./tts";
+import { executeVoiceTTS } from "./voiceTts";
 import { executeHTTPRequest } from "./http";
 import { executeDelay } from "./delay";
 import { executeConditional } from "./conditional";
+import { executeVideoAutoEdit } from "./videoAutoEdit";
+import { executeReviewApprovalGate } from "./reviewApprovalGate";
+import { executeVideoRenderFinal } from "./videoRenderFinal";
+import type { VoiceProfileRecord } from "../voice/types.js";
 
 export interface ExecutorContext {
   nodeId: string;
@@ -11,11 +16,18 @@ export interface ExecutorContext {
   config: Record<string, unknown>;
   inputData: Record<string, unknown>;
   getApiKey: (service: string) => Promise<string | null>;
+  userId?: string;
+  getVoiceProfile?: (profileId: string) => Promise<VoiceProfileRecord | null>;
+  /** Set when execution is running (for review gate / pause). */
+  executionId?: string;
+  /** Current step index in sorted order (for resume after review). */
+  stepIndex?: number;
 }
 
 export type ExecutorResult =
   | { output: Record<string, unknown> }
-  | { error: string };
+  | { output: Record<string, unknown>; pauseForReview: true; reviewSessionId: string }
+  | { error: string; errorStack?: string };
 
 export async function executeNode(
   ctx: ExecutorContext,
@@ -37,17 +49,26 @@ export async function executeNode(
         return await executeLLM(config, inputData, getApiKey);
 
       case "voice":
+        if (nodeType === "voice.tts") {
+          return await executeVoiceTTS(ctx);
+        }
         return await executeTTS(config, inputData, getApiKey);
 
       case "video":
+        if (nodeType === "video.auto_edit") return await executeVideoAutoEdit(ctx);
+        if (nodeType === "video.render_final") return await executeVideoRenderFinal(ctx);
         return {
           output: {
             videoUrl: `[placeholder] Video rendering not yet connected`,
             resolution: config.resolution || "1080p",
             format: config.format || "MP4",
-            note: "Video rendering requires FFmpeg integration (Phase 7)",
+            note: "Use video.auto_edit or video.render_final for Phase 7 pipeline.",
           },
         };
+
+      case "review":
+        if (nodeType === "review.approval_gate") return await executeReviewApprovalGate(ctx);
+        return { output: { result: inputData } };
 
       case "social":
         return {
@@ -88,6 +109,10 @@ export async function executeNode(
           console.log(`[WorkflowLogger] ${JSON.stringify(logData)}`);
           return { output: { logged: true, ...logData } };
         }
+        if (nodeType === "preview-output") {
+          // Pass-through: forward upstream output so the UI can show/play it (e.g. audio).
+          return { output: inputData };
+        }
         return { output: { result: inputData } };
 
       default:
@@ -95,6 +120,7 @@ export async function executeNode(
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    return { error: message };
+    const errorStack = err instanceof Error ? err.stack : undefined;
+    return { error: message, errorStack };
   }
 }

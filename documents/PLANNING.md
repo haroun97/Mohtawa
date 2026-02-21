@@ -2,8 +2,9 @@
 
 ## Mohtawa — AI Content Automation Workflow Platform
 
-**Date:** February 16, 2026
+**Date:** February 20, 2026
 **Methodology:** Iterative (phase-based MVP approach)
+**Last updated:** Phase 7a EDL Editor Phase 1 UI/UX rework (Instagram Edits–style) implemented; planning doc updated.
 
 ---
 
@@ -15,7 +16,7 @@
 4. [Phase 3 — Workflow Persistence & Execution](#4-phase-3--workflow-persistence--execution)
 5. [Phase 4 — AI & External Integrations](#5-phase-4--ai--external-integrations)
 6. [Phase 5 — Polish & Deploy MVP](#6-phase-5--polish--deploy-mvp)
-7. [Post-MVP Phases](#7-post-mvp-phases)
+7. [Post-MVP Phases](#7-post-mvp-phases) (includes Phase 6b — Voice cloning; Phase 7 — Video edit pipeline; Phase 7a — Instagram-style EDL Editor)
 8. [Data Model](#8-data-model)
 9. [API Routes](#9-api-routes)
 10. [Risk Register](#10-risk-register)
@@ -282,11 +283,304 @@ Foundation       Workflow Builder   Persistence &      AI & External    Polish &
 - Migrate backend to persistent server (Railway/Render) if needed.
 - Add Redis + BullMQ for background job processing.
 
-### Phase 7 — Video Rendering
+### Phase 6b — In-app voice cloning & TTS playback ✅
 
-- FFmpeg-based video rendering workers.
-- Template system for video generation.
-- S3/Vercel Blob storage for media files.
+**Goal:** Let users upload their voice in the app and have the app create the clone via the provider’s API, so “my voice” is generated from their samples without leaving the app. Also: playable TTS output in the UI and run log persistence so audio is available after reload.
+
+**Current state:** For **ElevenLabs**, when the user creates a profile with no Voice ID (optional), uploads samples, and clicks **Train** (“Clone my voice”), the backend calls ElevenLabs `POST /v1/voices/add` with the sample files (downloaded from S3), receives `voice_id`, and updates `VoiceProfile.providerVoiceId`. The voice.tts node uses that cloned voice and selects the **multilingual** model when the profile language is not English (e.g. Arabic). TTS output is stored in S3; the frontend can play it via a presigned URL. A **Preview Output** node shows and plays the last run’s output (including audio) on the canvas and in the Inspector; the latest execution is loaded when opening a workflow so audio remains available after page reload. Azure still requires a pre-set voice name; in-app cloning for Azure is not implemented.
+
+**Done:**
+
+| #   | Task | Priority | Status   |
+|-----|------|----------|----------|
+| 6b.1 | **ElevenLabs:** Integrate Add Voice API — on Train, download assets from S3, call `POST /v1/voices/add`, update profile with returned `voice_id`. | High | ✅ Done |
+| 6b.4 | **UX:** Voice profiles create allows optional Voice ID for ElevenLabs; detail shows “Clone from samples” when empty; Train button shows “Clone my voice (ElevenLabs)” when applicable. | Medium | ✅ Done |
+| 6b.5 | **Language-aware TTS:** Use ElevenLabs `eleven_multilingual_v2` when voice profile language is not English (e.g. Arabic); monolingual for English. | High | ✅ Done |
+| 6b.6 | **Preview Output node:** Pass-through utility node; view/play upstream output. Audio player in Logs and in Inspector “Last run output” when selected. | High | ✅ Done |
+| 6b.7 | **Playable audio:** Voice TTS output includes `audioKey`; `GET /api/storage/play?key=...` returns short-lived presigned S3 URL; frontend `AudioPlayer` fetches URL and plays in browser (Logs + Inspector). | High | ✅ Done |
+| 6b.8 | **Audio on node:** Inline audio player on the Preview Output node on the canvas when last run has audio. | Medium | ✅ Done |
+| 6b.9 | **Run log persistence:** On workflow open, fetch latest execution and restore `runLog` so audio and output are available after page reload. | High | ✅ Done |
+
+**Remaining:**
+
+| #   | Task | Priority | Status   |
+|-----|------|----------|----------|
+| 6b.2 | **Async / polling:** If cloning takes too long, run train as a BullMQ job and poll or webhook; show “Cloning…” in UI until ready. | High | Not started |
+| 6b.3 | **Azure:** Integrate Custom Neural Voice (or equivalent) so Azure users can clone from samples in-app. | Medium | Not started |
+
+**Deliverables (done):**
+
+- User creates profile (no Voice ID) → uploads samples → clicks “Clone my voice” → app calls ElevenLabs add-voice → profile gets cloned `providerVoiceId` → voice.tts generates speech in the user’s cloned voice.
+- Non-English (e.g. Arabic) profile + text → TTS uses multilingual model → clear, understandable output.
+- Voice TTS → Preview Output node → audio playable in Logs, in Inspector “Last run output”, and inline on the node; play via presigned URL (S3).
+- Opening a workflow (including after reload) restores the latest run log so Preview Output and Logs show the last run’s audio.
+
+### Phase 7 — Automated video edit pipeline & review gate
+
+**Goal:** A fully automated editing node that produces a draft video from clips + voiceover, an optional human-in-the-loop review gate (approve / tweak EDL), then final render and publish.
+
+**High-level flow:** Script → Voiceover → **video.auto_edit** → **review.approval_gate** → **video.render_final** → Publish.
+
+---
+
+#### Node A: `video.auto_edit` (fully automated)
+
+| | |
+|--|--|
+| **Inputs** | `clips: Array<{ url: string; durationSec?: number; tags?: string[] }>`, `voiceoverUrl: string`, `captionsSrtUrl?: string` |
+| **Config** | `aspectRatio: "9:16" \| "1:1" \| "16:9"` (default `"9:16"`), `stylePreset: "documentary" \| "energetic" \| "calm"` (default `"documentary"`), `minClipSec` (default 1.5), `maxClipSec` (default 3.5), `enableMusic?: boolean` (default false), `seed?: number` (optional) |
+| **Output** | `projectId: string`, `edlUrl: string` (EDL JSON in S3), `draftVideoUrl: string` (draft mp4 in S3) |
+
+---
+
+#### Node B: `review.approval_gate` (human-in-the-loop)
+
+| | |
+|--|--|
+| **Inputs** | `projectId`, `draftVideoUrl`, `edlUrl` (from upstream) |
+| **Config** | `mode: "auto_approve" \| "manual_review" \| "manual_with_timeout"`, `autoApproveAfterSec?: number` (only when `manual_with_timeout`) |
+| **Behavior** | **auto_approve:** pass-through, output `approvedEdlUrl` = input EDL. **manual_review:** workflow pauses until user Approve/Edit. **manual_with_timeout:** pause with optional auto-approve after timeout. |
+| **Output** | `approvedEdlUrl: string` (original or updated EDL URL) |
+
+---
+
+#### Node C: `video.render_final`
+
+| | |
+|--|--|
+| **Inputs** | `projectId`, `approvedEdlUrl`, `voiceoverUrl`, `captionsSrtUrl?` |
+| **Output** | `finalVideoUrl: string` (mp4 in S3) |
+
+---
+
+#### A) EDL format and validation
+
+- **Schema (JSON):**
+  - `timeline: Array<{ clipUrl, inSec, outSec, startSec }>`
+  - `overlays: Array<{ type: "text", text, startSec, endSec, position, style }>`
+  - `audio: { voiceoverUrl, musicUrl?, voiceGainDb?, musicGainDb? }`
+  - `output: { width, height, fps }`
+- Validate EDL with **Zod** (shared schema backend + frontend).
+
+---
+
+#### B) Auto-edit algorithm (MVP)
+
+- Probe voiceover duration (e.g. ffprobe).
+- Select clips to cover voiceover duration; trim each to `[minClipSec..maxClipSec]`; concatenate in order.
+- If captions provided: add hook overlay from first caption / first sentence (e.g. first 1.5s).
+- Produce EDL JSON → upload to S3.
+- **Draft preview:** FFmpeg: concat clips, scale/crop to aspect ratio, add voiceover, optional low-volume music; burn subtitles if `captionsSrtUrl` provided. Upload draft mp4 to S3.
+
+---
+
+#### C) Execution engine changes
+
+- Add step status **`WAITING_FOR_REVIEW`** (or equivalent).
+- **Pause/resume:**
+  - When approval gate is in manual modes: mark run/step as waiting; stop downstream execution.
+  - Store **`resumeToken`** / **`reviewSessionId`** in DB.
+- **Resolve endpoint:**  
+  `POST /api/runs/:runId/steps/:stepId/resolve-review`  
+  Body: `{ action: "approve" \| "edit", approvedEdl?: object }`.  
+  If `action === "edit"`: validate EDL, upload new EDL to S3, then resume with `approvedEdlUrl`.
+- **manual_with_timeout:** Schedule delayed job (e.g. BullMQ) to auto-approve if not resolved by `expiresAt`.
+
+---
+
+#### D) Data model
+
+- **`video_projects`:** `id`, `userId`, `runId`, `createdAt`, `draftVideoUrl`, `edlUrl`, `approvedEdlUrl?`, `status`.
+- **`review_sessions`:** `id`, `runId`, `stepId`, `projectId`, `status` (pending / resolved / expired), `expiresAt?`, `createdAt`, `resolvedAt?`.
+
+(Migration scripts to add these tables.)
+
+---
+
+#### E) Frontend (MVP)
+
+- **Builder:** Add the three nodes to the node library (icons + inspector config forms).
+- **Run logs panel:** When step is `WAITING_FOR_REVIEW`, show CTA: **“Review draft”**.
+- **Review modal/page:**
+  - Video player for `draftVideoUrl` (presigned or play endpoint).
+  - Buttons: **Approve**, **Edit**.
+  - **Edit (MVP):** Simple editor: reorder clips (drag list), trim in/out sliders per clip, edit hook text overlay → **Save** → POST updated EDL to resolve endpoint.
+- Premium UI: smooth animations, consistent with existing design.
+
+---
+
+#### F) Tests
+
+- **Unit:** EDL validation (Zod); auto-edit clip selection / duration logic.
+- **Integration:** Approval gate pause/resume (mock queue + DB); resolve endpoint with approve/edit.
+- **Mock FFmpeg** in tests (no real binaries in CI).
+
+---
+
+#### Deliverables (Phase 7)
+
+- [x] EDL schema + Zod validation; S3 upload helpers for EDL and video.
+- [x] Node executors: `video.auto_edit`, `review.approval_gate`, `video.render_final`.
+- [x] Execution engine: `WAITING_FOR_REVIEW`, pause/resume, resolve-review endpoint.
+- [ ] **manual_with_timeout:** Optional timeout job (BullMQ delayed job) to auto-approve if not resolved by `expiresAt`.
+- [x] Prisma models + migrations: `video_projects`, `review_sessions`.
+- [x] Frontend: 3 nodes in library, run logs “Review draft” CTA, review modal (play, Approve, Edit with basic EDL editor).
+- [x] Sample workflow JSON: script → voiceover → auto_edit → approval_gate → render_final → publish.
+- [x] No secrets in logs; reuse existing S3 config for all uploads.
+
+**Remaining (Phase 7):** `manual_with_timeout` if needed. Voiceover duration probing implemented (ffprobe in `video.auto_edit`).
+
+---
+
+### Phase 7a — Instagram-Style EDL Editor (MVP) ✅
+
+**Status:** Implemented (February 2026). Phase 1 UI/UX rework complete: mobile-first, tool-driven layout with bottom sheets.
+
+**Goal:** Keep Auto Edit fully automated. Add a **Review/Edit** flow that opens a visual EDL editor. Allow editing and quick re-render of draft preview. Redesign editor to feel like Instagram Edits / CapCut: tool-driven, bottom sheets, thumbnail timeline.
+
+**Prerequisites:** Phase 7 (video.auto_edit, review.approval_gate, video.render_final, VideoProject, ReviewSession) in place.
+
+---
+
+#### 1. Backend requirements
+
+##### A) EDL schema (extend existing; backward compatible) ✅
+
+Implemented in `backend/src/edl/schema.ts`: optional `id` on timeline and overlays; optional `stylePreset` on text overlays; optional `color: { saturation?, contrast?, vibrance? }`; optional `musicEnabled`, `musicVolume`, `voiceVolume` on audio (with backward compat for `voiceGainDb`/`musicGainDb`). `clipUrl` accepts any non-empty string (including `s3://`).
+
+**Target EDL structure (Zod-validated):**
+
+| Section    | Field / shape | Notes |
+|-----------|----------------|-------|
+| **timeline** | `id: string`, `clipUrl: string`, `inSec: number`, `outSec: number`, `startSec: number` | Add `id` for UI drag/reorder; keep existing fields. |
+| **overlays** | `id: string`, `type: "text"`, `text: string`, `startSec`, `endSec`, `stylePreset: string` | Add `id`; support `stylePreset` (alias or replace `style`). Presets: e.g. `bold_white_shadow`, `yellow_caption`, `minimal_lower`. |
+| **audio**   | `voiceoverUrl: string`, `musicUrl?: string`, `musicEnabled: boolean`, `musicVolume: number` (0–1), `voiceVolume: number` (0–1) | Add `musicEnabled`, `musicVolume`, `voiceVolume`; keep or map existing gain fields for backward compatibility. |
+| **color**   | `saturation: number`, `contrast: number`, `vibrance: number` | New optional block; defaults (e.g. 1.0) when absent. |
+| **output**  | `width`, `height`, `fps` | Unchanged. |
+
+- Validate with **Zod**; allow older EDLs (no `id`, no `color`, gain Db) via `.optional()` / defaults so existing auto_edit output and stored EDLs remain valid.
+
+##### B) API endpoints ✅
+
+| Method | Route | Description | Auth |
+|--------|--------|-------------|------|
+| GET    | `/api/projects/:projectId` | Project detail (for polling after render). | Required |
+| GET    | `/api/projects/:projectId/edl` | Return EDL JSON (from S3). User must own project. | Required |
+| POST   | `/api/projects/:projectId/edl/update` | Validate EDL body with Zod; store to S3; update project’s `edlUrl`. | Required |
+| POST   | `/api/projects/:projectId/render-draft` | Enqueue async draft re-render (BullMQ `draft-render` queue when Redis set); else run in-process. Returns 202 + jobId or 200 + draftVideoUrl. | Required |
+
+Implemented: `backend/src/routes/projects.ts`, `backend/src/services/projects.ts`, `backend/src/lib/draftRenderQueue.ts`.
+
+##### C) FFmpeg adjustments (modular) ✅
+
+Implemented in `backend/src/video/render.ts` and `backend/src/video/subtitles.ts`:
+
+1. **Clip trim** — in place (inSec/outSec).
+2. **Reorder** — timeline sorted by `startSec` before concat.
+3. **Color filters** — `buildColorFilter(edl.color)` using `eq=saturation=X:contrast=Y` (vibrance mapped to brightness); applied when `edl.color` present.
+4. **Music** — `musicEnabled === true` + `musicUrl`: fetch music, mix with voice at `voiceVolume`/`musicVolume` (0–1); fallback from `voiceGainDb`/`musicGainDb`.
+5. **Draft vs final bitrate** — `isDraft: true` → 4 Mbps; otherwise 10 Mbps.
+6. **Subtitle style presets** — `buildAssFromEdl(edl)` generates ASS from text overlays; three styles: bold_white_shadow, yellow_caption, minimal_lower. Burn-in via `ass` filter when overlays exist.
+
+Backward compatible when EDL has no `color` or music.
+
+---
+
+#### 2. Frontend requirements ✅
+
+- **Review node UI:** “Edit” button opens full-screen EDL Editor (portal to `document.body`); “Edit EDL (JSON)” remains for raw JSON. Implemented in `ReviewModal.tsx`.
+
+**EDL Editor — Phase 1 UI/UX rework (Instagram Edits–style):**
+
+- **Entry:** `EdlEditor.tsx` — loads EDL, resolves play URL, holds save/export logic, keyboard shortcuts; renders `EditorPage`.
+- **Layout:** `EditorPage.tsx` — full-screen; top bar + centered 9:16 preview + timeline + bottom tool bar. Responsive (mobile-first); on desktop same structure, tool controls in bottom sheets.
+- **Top bar** (`EditorTopBar.tsx`): Back (X), title “Edit draft”, resolution badge (e.g. 1080p), save indicator (“Saving…” / “Saved”), **Export** button (replaces “Save & Re-render”).
+- **Preview** (`PreviewPlayer.tsx`): Vertical 9:16 video; live CSS filter for color (saturation/contrast/vibrance); ref for Space play/pause.
+- **Timeline** (`TimelineTrack.tsx`): Thumbnail-style track — clip blocks with label + duration; drag-to-reorder (HTML5 DnD); playhead scrubber; selection by `selectedClipId` (outline/ring). Trim is in **Trim** tool sheet when a clip is selected.
+- **Tool bar** (`ToolBar.tsx`): Bottom, horizontally scrollable icons — **Adjust**, **Audio**, **Captions**, **Trim** (Trim disabled when no clip selected). Tapping a tool opens the corresponding bottom sheet.
+- **Tool sheets** (shadcn `Sheet` side="bottom"): **AdjustSheet** (saturation, contrast, vibrance + Reset), **AudioSheet** (voice volume, music toggle, music volume), **CaptionsSheet** (subtitle style presets per overlay), **TrimSheet** (In/Out sliders for selected clip). Open/close driven by `activeTool` in store.
+- **State:** `edlEditorStore` (Zustand): `selectedClipId`, `activeTool`, `saveStatus`; reset on editor unmount.
+- **Export flow:** Export button → POST edl/update → POST render-draft; progress (spinner, disabled controls); toast on success/error; poll project for new draft URL when queued.
+- **Keyboard:** Space = play/pause; Cmd/Ctrl+S = Export.
+
+**File structure:** `frontend/src/components/builder/editor/` — `EditorPage.tsx`, `EditorTopBar.tsx`, `PreviewPlayer.tsx`, `TimelineTrack.tsx`, `ToolBar.tsx`, `AdjustSheet.tsx`, `AudioSheet.tsx`, `CaptionsSheet.tsx`, `TrimSheet.tsx`, `editorLib.ts`. Store: `frontend/src/store/edlEditorStore.ts`. API unchanged: `projectsApi` in `frontend/src/lib/api.ts`.
+
+---
+
+#### 3. Performance strategy
+
+- **Draft render:** lower bitrate (e.g. 4 Mbps), faster preset if needed.
+- **Final render:** full quality (8–12 Mbps).
+- **Re-render only on Save** — not on every slider move.
+- **Debounce** slider/control changes (500 ms) before marking dirty and enabling Save.
+
+---
+
+#### 4. Phase 2 (future) — design for extension (do not implement yet)
+
+Architecture should allow later:
+
+- Transitions between clips
+- Speed ramp per clip
+- Keyframe-based animation
+- Template packs (stored presets: overlays + color + transitions)
+- Optional Remotion renderer
+
+**Pluggable render engine:** abstract behind an interface (e.g. `Renderer` with `renderDraft(edl, options)` / `renderFinal(edl, options)`). Implementations:
+
+- `FFmpegRenderer` (current)
+- `RemotionRenderer` (future)
+
+Structure code so that adding a new renderer does not require changing the EDL schema or the API contract; only the implementation behind the same endpoints.
+
+---
+
+#### 5. Deliverables (Phase 7a)
+
+- [x] Backend: EDL schema extensions (Zod) with backward compatibility; controllers/services for GET/POST projects/:projectId/edl, POST edl/update, POST render-draft; draft-render queue worker.
+- [x] Updated FFmpeg render logic: trim, reorder by startSec, color filters, music toggle + volumes; draft vs final bitrate. ASS subtitle burn-in with style presets.
+- [x] Frontend: “Edit” button in Review node UI; full-screen EDL Editor (horizontal drag timeline, trim panel, color/music/voice sliders, subtitle preset dropdown, Save & Re-render with progress).
+- [x] Example EDL: `documents/example-edl-phase7a.json` (color, musicEnabled, stylePreset, id on clips/overlays).
+- [x] Sample workflow: `documents/sample-workflow-video-pipeline.json`; Edit path uses new editor.
+
+**Constraints:** Strong typing; clean modular design; no breaking changes to existing `video.auto_edit`; backward compatibility for older EDLs.
+
+---
+
+#### 6. What’s next (after Phase 7a)
+
+**Editor feature — next steps:**
+
+| Priority | Item | Notes |
+|----------|------|-------|
+| 1 | ~~**Phase 7a Phase 1 UI rework**~~ | ✅ Done: full-screen editor, top bar (Export, save indicator), 9:16 preview, thumbnail timeline, bottom tool bar, tool sheets (Adjust, Audio, Captions, Trim), edlEditorStore, keyboard shortcuts. |
+| 2 | **Real clip thumbnails in timeline** | Timeline currently shows label + duration per clip; add tiny thumbnail frame per clip (e.g. video frame at `inSec` or placeholder) for Instagram-like look. May require backend thumbnail endpoint or client-side video decode. |
+| 3 | **Split clip (UI + backend)** | Add “Split” to tool bar; when backend supports split (new clip + updated inSec/outSec), show Split in editor; otherwise keep hidden. |
+| 4 | **Overlay editing in editor** | Add/remove text overlays; edit overlay text, startSec, endSec (currently only style preset in Captions sheet; full overlay edit is JSON-only). |
+| 5 | **Desktop: optional right panel for tools** | On desktop, consider showing active tool controls in a right-side panel instead of (or in addition to) bottom sheet for faster access. |
+| 6 | **Delete selected clip** | If backend supports removing a clip from EDL (reflow startSec), add Delete to tool bar and Del keyboard shortcut. |
+
+**Other (unchanged):**
+
+| Priority | Item | Notes |
+|----------|------|-------|
+| 7 | ~~**Phase 7:** Voiceover duration probing~~ | ✅ Done. |
+| 8 | **Phase 7:** manual_with_timeout | Optional: BullMQ delayed job to auto-approve review if not resolved by `expiresAt`. |
+| 9 | **Phase 6b.2:** Async voice cloning | Run ElevenLabs train as BullMQ job; polling or webhook + “Cloning…” UI. |
+| 10 | **Phase 7a/2:** Pluggable renderer | Abstract `VideoRenderer` interface; then Phase 2 (transitions, speed ramp, keyframes, template packs). |
+
+---
+
+#### 7. Assessment and notes
+
+- **Scope:** Phase 7a delivered: one full-screen editor, projects API (GET project, GET/POST edl, POST render-draft), and FFmpeg extensions. Re-render on Save only; no live encoding on slider move.
+- **EDL schema:** Adding optional `id` and `stylePreset`, and a separate `color` block with defaults, keeps existing EDLs valid. Consider normalizing `voiceGainDb`/`musicGainDb` to `voiceVolume`/`musicVolume` in the schema with a compatibility layer when reading old EDLs so the editor always works in 0–1.
+- **Projects API:** `projectId` already exists (VideoProject.id). Ensure GET/POST EDL and render-draft verify `userId` from JWT matches `VideoProject.userId`. If EDL is stored only in S3 and key is on the project, GET can resolve from `edlUrl` (presigned or proxy).
+- **Queue:** Reusing the existing queue with a new job type (e.g. `draft-render`) is simpler than a separate queue; worker can branch on job type. Alternatively a dedicated `draft-render` queue keeps workflow execution and heavy FFmpeg jobs separated (recommended if same Redis is used for both).
+- **Frontend:** Phase 1 UI rework delivers a mobile-first, tool-driven editor: top bar with Export and save indicator, centered 9:16 preview, thumbnail-style timeline with playhead and drag-to-reorder, bottom tool bar (Adjust, Audio, Captions, Trim), and bottom sheets for each tool. Same API and EDL contract; no backend changes.
+- **Phase 2 readiness:** Abstracting the renderer behind an interface (e.g. `VideoRenderer`) in the service layer makes Remotion or other backends a drop-in later without changing API or EDL contract.
+
+---
 
 ### Phase 8 — Advanced Features
 
@@ -369,6 +663,33 @@ model ApiKey {
 }
 ```
 
+### Phase 7 entities (video edit pipeline)
+
+```prisma
+model VideoProject {
+  id              String    @id @default(cuid())
+  userId          String
+  runId           String?   // workflow execution id
+  draftVideoUrl   String?
+  edlUrl          String
+  approvedEdlUrl  String?
+  status          String   // e.g. draft, approved, rendered
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id])
+}
+
+model ReviewSession {
+  id         String    @id @default(cuid())
+  runId      String
+  stepId     String
+  projectId  String?
+  status     String    // pending | resolved | expired
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+}
+```
+
 ### Entity Relationship Diagram
 
 ```
@@ -385,11 +706,9 @@ model ApiKey {
      │1:N
      ▼
 ┌──────────┐
-│  ApiKey   │
-│          │
+│  ApiKey   │     Phase 7: VideoProject (edlUrl, draftVideoUrl), ReviewSession (runId, stepId, status, expiresAt)
 │ service  │
 │ encrypted│
-│ Key      │
 └──────────┘
 ```
 
@@ -417,6 +736,7 @@ model ApiKey {
 | POST   | `/api/workflows/:id/duplicate`     | Duplicate a workflow    | Required |
 | POST   | `/api/workflows/:id/execute`       | Execute a workflow      | Required |
 | GET    | `/api/workflows/:id/executions`    | Get execution history   | Required |
+| POST   | `/api/workflows/:id/executions/:execId/steps/:stepId/resolve-review` | Resolve approval gate (approve or edit EDL); body: `{ action, approvedEdl? }` | Required |
 
 ### Settings
 
@@ -425,6 +745,21 @@ model ApiKey {
 | GET    | `/api/settings/keys`   | List user's API keys    | Required |
 | POST   | `/api/settings/keys`   | Store a new API key     | Required |
 | DELETE | `/api/settings/keys/:id` | Delete an API key     | Required |
+
+### Storage (Phase 6b)
+
+| Method | Route                     | Description                              | Auth     |
+|--------|----------------------------|------------------------------------------|----------|
+| GET    | `/api/storage/play?key=...` | Return presigned S3 URL for playback (e.g. TTS audio). Key must be `voice-output/{userId}/...`. | Required |
+
+### Projects / EDL (Phase 7a)
+
+| Method | Route | Description | Auth |
+|--------|--------|-------------|------|
+| GET    | `/api/projects/:projectId` | Get project detail (draftVideoUrl, edlUrl, status); used for polling after render-draft. | Required |
+| GET    | `/api/projects/:projectId/edl` | Get EDL JSON for project (from S3). User must own project. | Required |
+| POST   | `/api/projects/:projectId/edl/update` | Validate EDL body (Zod), store to S3, update project ref. | Required |
+| POST   | `/api/projects/:projectId/render-draft` | Enqueue async draft re-render (or run in-process); update draftVideoUrl when done. | Required |
 
 ### System
 

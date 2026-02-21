@@ -8,29 +8,33 @@ datasource db {
 }
 
 model User {
-  id           String              @id @default(cuid())
-  email        String              @unique
-  passwordHash String
-  name         String?
-  role         String              @default("USER")
-  workflows    Workflow[]
-  apiKeys      ApiKey[]
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id             String               @id @default(cuid())
+  email          String               @unique
+  passwordHash   String
+  name           String?
+  role           String               @default("USER")
+  workflows      Workflow[]
+  apiKeys        ApiKey[]
+  voiceProfiles  VoiceProfile[]
+  videoProjects  VideoProject[]
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 }
 
 model Workflow {
-  id          String              @id @default(cuid())
-  name        String
-  description String?
-  status      String              @default("DRAFT")
-  nodes       String              @default("[]")
-  edges       String              @default("[]")
-  userId      String
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  executions  WorkflowExecution[]
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id                   String              @id @default(cuid())
+  name                 String
+  description          String?
+  status               String              @default("DRAFT")
+  nodes                String              @default("[]")
+  edges                String              @default("[]")
+  lastCompletedRunLog  String?             // JSON RunLog when last run completed/failed
+  lastRunLog           String?             // JSON RunLog for latest run (incl. WAITING_FOR_REVIEW) so UI can restore after reload
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  executions           WorkflowExecution[]
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 }
 
 model WorkflowExecution {
@@ -53,4 +57,66 @@ model ApiKey {
   label        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+// Voice clone / TTS: user's custom voice profiles (ElevenLabs or Azure)
+model VoiceProfile {
+  id              String               @id @default(cuid())
+  userId          String
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        String               // 'elevenlabs' | 'azure'
+  providerVoiceId String              // voice id from provider (e.g. ElevenLabs voice_id, Azure short name)
+  name            String
+  language        String?              @default("en")
+  trainingStatus  String?              @default("pending") // pending | ready | training | failed
+  assets          VoiceTrainingAsset[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([userId])
+}
+
+model VoiceTrainingAsset {
+  id              String       @id @default(cuid())
+  userId          String
+  voiceProfileId  String
+  voiceProfile    VoiceProfile @relation(fields: [voiceProfileId], references: [id], onDelete: Cascade)
+  fileUrl         String       // S3 or storage URL
+  durationSec     Float?
+  createdAt       DateTime     @default(now())
+
+  @@index([voiceProfileId])
+  @@index([userId])
+}
+
+// Phase 7: Automated video edit pipeline
+model VideoProject {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runId          String?  // workflow execution id
+  draftVideoUrl  String?
+  edlUrl         String
+  approvedEdlUrl String?
+  status         String   @default("draft") // draft | approved | rendered
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+  @@index([runId])
+}
+
+model ReviewSession {
+  id         String    @id @default(cuid())
+  runId      String
+  stepId     String
+  projectId  String?
+  status     String    @default("pending") // pending | resolved | expired
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@unique([runId, stepId])
+  @@index([runId])
+  @@index([status])
 }

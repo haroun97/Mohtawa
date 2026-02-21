@@ -7,6 +7,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Dashboard from "./pages/Dashboard";
 import Builder from "./pages/Builder";
 import Settings from "./pages/Settings";
+import VoiceProfiles from "./pages/VoiceProfiles";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
@@ -43,6 +44,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Settings />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/voice-profiles"
+              element={
+                <ProtectedRoute>
+                  <VoiceProfiles />
                 </ProtectedRoute>
               }
             />

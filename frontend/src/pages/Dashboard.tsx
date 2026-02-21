@@ -4,7 +4,7 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Search, Workflow, MoreHorizontal, Trash2, Copy, Sun, Moon, LogOut, User, Loader2, Settings } from 'lucide-react';
+import { Plus, Search, Workflow, MoreHorizontal, Trash2, Copy, Sun, Moon, LogOut, User, Loader2, Settings, Mic } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -129,6 +129,9 @@ export default function Dashboard() {
                   <p className="text-xs text-muted-foreground">{user?.email}</p>
                 </div>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => navigate('/voice-profiles')}>
+                  <Mic className="h-4 w-4 mr-2" /> Voice profiles
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="h-4 w-4 mr-2" /> Settings
                 </DropdownMenuItem>

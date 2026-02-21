@@ -1,4 +1,4 @@
-export type NodeCategory = 'trigger' | 'ai' | 'voice' | 'video' | 'social' | 'logic' | 'utility';
+export type NodeCategory = 'trigger' | 'ai' | 'voice' | 'video' | 'social' | 'logic' | 'utility' | 'review';
 
 export interface NodeDefinition {
   type: string;
@@ -29,7 +29,7 @@ export interface WorkflowNode {
   data: {
     definition: NodeDefinition;
     config: Record<string, any>;
-    status?: 'idle' | 'running' | 'success' | 'error' | 'disabled';
+    status?: 'idle' | 'running' | 'success' | 'error' | 'disabled' | 'waiting_review';
   };
 }
 
@@ -51,7 +51,7 @@ export interface WorkflowEdge {
   targetHandle?: string;
 }
 
-export type RunStatus = 'idle' | 'running' | 'success' | 'error';
+export type RunStatus = 'idle' | 'running' | 'success' | 'error' | 'waiting_review';
 
 export interface RunStep {
   nodeId: string;
@@ -62,6 +62,7 @@ export interface RunStep {
   input?: Record<string, any>;
   output?: Record<string, any>;
   error?: string;
+  reviewSessionId?: string;
 }
 
 export interface RunLog {

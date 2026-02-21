@@ -1,0 +1,68 @@
+{
+  "name": "Script → Voiceover → Auto Edit → Review → Render",
+  "description": "Sample Phase 7 pipeline: generate script, voiceover, auto-edit draft, human review gate, final render",
+  "status": "draft",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "manual-trigger",
+      "position": { "x": 40, "y": 120 },
+      "data": {
+        "definition": { "type": "manual-trigger", "category": "trigger", "title": "Manual Trigger", "inputs": [], "outputs": ["output"], "fields": [] },
+        "config": {}
+      }
+    },
+    {
+      "id": "script-1",
+      "type": "generate-script",
+      "position": { "x": 260, "y": 120 },
+      "data": {
+        "definition": { "type": "generate-script", "category": "ai", "title": "Generate Script", "inputs": ["input"], "outputs": ["output"], "fields": [] },
+        "config": { "prompt": "A 30-second documentary style intro about nature.", "provider": "openai", "model": "gpt-4o-mini" }
+      }
+    },
+    {
+      "id": "voice-1",
+      "type": "voice.tts",
+      "position": { "x": 480, "y": 120 },
+      "data": {
+        "definition": { "type": "voice.tts", "category": "voice", "title": "My Voice (Clone) → Generate Voiceover", "inputs": ["text"], "outputs": ["audio"], "fields": [] },
+        "config": { "voiceProfileId": "<YOUR_VOICE_PROFILE_ID>", "format": "mp3", "text": "" }
+      }
+    },
+    {
+      "id": "auto-edit-1",
+      "type": "video.auto_edit",
+      "position": { "x": 700, "y": 120 },
+      "data": {
+        "definition": { "type": "video.auto_edit", "category": "video", "title": "Auto Edit (Draft)", "inputs": ["clips", "voiceover", "captions"], "outputs": ["output"], "fields": [] },
+        "config": { "aspectRatio": "9:16", "stylePreset": "documentary", "minClipSec": 1.5, "maxClipSec": 3.5 }
+      }
+    },
+    {
+      "id": "review-1",
+      "type": "review.approval_gate",
+      "position": { "x": 920, "y": 120 },
+      "data": {
+        "definition": { "type": "review.approval_gate", "category": "review", "title": "Review / Approve", "inputs": ["input"], "outputs": ["output"], "fields": [] },
+        "config": { "mode": "manual_review" }
+      }
+    },
+    {
+      "id": "render-final-1",
+      "type": "video.render_final",
+      "position": { "x": 1140, "y": 120 },
+      "data": {
+        "definition": { "type": "video.render_final", "category": "video", "title": "Render Final", "inputs": ["input"], "outputs": ["output"], "fields": [] },
+        "config": {}
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "trigger-1", "target": "script-1", "sourceHandle": "output", "targetHandle": "input" },
+    { "id": "e2", "source": "script-1", "target": "voice-1", "sourceHandle": "output", "targetHandle": "text" },
+    { "id": "e3", "source": "voice-1", "target": "auto-edit-1", "sourceHandle": "audio", "targetHandle": "voiceover" },
+    { "id": "e4", "source": "auto-edit-1", "target": "review-1", "sourceHandle": "output", "targetHandle": "input" },
+    { "id": "e5", "source": "review-1", "target": "render-final-1", "sourceHandle": "output", "targetHandle": "input" }
+  ]
+}

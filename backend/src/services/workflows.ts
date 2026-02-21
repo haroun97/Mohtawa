@@ -111,6 +111,8 @@ function formatWorkflow(wf: {
   status: string;
   nodes: string;
   edges: string;
+  lastCompletedRunLog: string | null;
+  lastRunLog: string | null;
   userId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -122,6 +124,8 @@ function formatWorkflow(wf: {
     status: wf.status,
     nodes: JSON.parse(wf.nodes),
     edges: JSON.parse(wf.edges),
+    lastCompletedRunLog: wf.lastCompletedRunLog ? JSON.parse(wf.lastCompletedRunLog) : null,
+    lastRunLog: wf.lastRunLog ? JSON.parse(wf.lastRunLog) : null,
     userId: wf.userId,
     createdAt: wf.createdAt.toISOString(),
     updatedAt: wf.updatedAt.toISOString(),

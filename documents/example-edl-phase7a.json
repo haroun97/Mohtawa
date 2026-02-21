@@ -1,0 +1,53 @@
+{
+  "timeline": [
+    {
+      "id": "clip-0",
+      "clipUrl": "https://example.com/clip1.mp4",
+      "inSec": 0,
+      "outSec": 2.5,
+      "startSec": 0
+    },
+    {
+      "id": "clip-1",
+      "clipUrl": "https://example.com/clip2.mp4",
+      "inSec": 0.5,
+      "outSec": 3,
+      "startSec": 2.5
+    },
+    {
+      "id": "clip-2",
+      "clipUrl": "https://example.com/clip1.mp4",
+      "inSec": 0,
+      "outSec": 2,
+      "startSec": 5.5
+    }
+  ],
+  "overlays": [
+    {
+      "id": "overlay-0",
+      "type": "text",
+      "text": "Welcome to the show",
+      "startSec": 0,
+      "endSec": 1.5,
+      "position": "bottom",
+      "stylePreset": "bold_white_shadow"
+    }
+  ],
+  "audio": {
+    "voiceoverUrl": "https://example.com/voiceover.mp3",
+    "musicUrl": "https://example.com/music.mp3",
+    "musicEnabled": true,
+    "musicVolume": 0.3,
+    "voiceVolume": 1
+  },
+  "color": {
+    "saturation": 1.1,
+    "contrast": 1.05,
+    "vibrance": 1.0
+  },
+  "output": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  }
+}

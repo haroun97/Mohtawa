@@ -1,0 +1,71 @@
+{
+  "name": "My Voice → Voiceover",
+  "description": "Generate voiceover using a cloned voice profile (voice.tts node)",
+  "status": "DRAFT",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "manual-trigger",
+      "position": { "x": 100, "y": 100 },
+      "data": {
+        "definition": {
+          "type": "manual-trigger",
+          "title": "Manual Trigger",
+          "category": "trigger",
+          "inputs": [],
+          "outputs": ["output"]
+        },
+        "config": {},
+        "status": "enabled"
+      }
+    },
+    {
+      "id": "script-1",
+      "type": "generate-script",
+      "position": { "x": 320, "y": 100 },
+      "data": {
+        "definition": {
+          "type": "generate-script",
+          "title": "Generate Script",
+          "category": "ai",
+          "inputs": ["input"],
+          "outputs": ["output"]
+        },
+        "config": {
+          "provider": "openai",
+          "model": "gpt-4o-mini",
+          "prompt": "Write a 2-sentence intro for a product demo.",
+          "temperature": 0.7
+        },
+        "status": "enabled"
+      }
+    },
+    {
+      "id": "voice-tts-1",
+      "type": "voice.tts",
+      "position": { "x": 540, "y": 100 },
+      "data": {
+        "definition": {
+          "type": "voice.tts",
+          "title": "My Voice (Clone) → Generate Voiceover",
+          "category": "voice",
+          "inputs": ["text"],
+          "outputs": ["audio"]
+        },
+        "config": {
+          "voiceProfileId": "<YOUR_VOICE_PROFILE_ID>",
+          "format": "mp3",
+          "text": "",
+          "stability": 0.5,
+          "similarityBoost": 0.75,
+          "speakingRate": 1.0
+        },
+        "status": "enabled"
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "trigger-1", "target": "script-1", "sourceHandle": "output", "targetHandle": "input" },
+    { "id": "e2", "source": "script-1", "target": "voice-tts-1", "sourceHandle": "output", "targetHandle": "text" }
+  ]
+}

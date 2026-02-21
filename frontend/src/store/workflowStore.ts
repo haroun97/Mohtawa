@@ -15,6 +15,8 @@ interface ApiWorkflow {
   status: string;
   nodes: unknown[];
   edges: unknown[];
+  lastCompletedRunLog?: RunLog | null;
+  lastRunLog?: RunLog | null;
   userId: string;
   createdAt: string;
   updatedAt: string;
@@ -34,13 +36,14 @@ interface ApiStepLog {
   nodeId: string;
   nodeType: string;
   nodeTitle: string;
-  status: 'idle' | 'running' | 'success' | 'error';
+  status: 'idle' | 'running' | 'success' | 'error' | 'waiting_review';
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   error?: string;
+  reviewSessionId?: string;
 }
 
 function findDef(type: string) {
@@ -73,15 +76,72 @@ function hydrateEdges(raw: unknown[]): WorkflowEdge[] {
   }));
 }
 
+/** Ensure every node has a unique id; reassign duplicates and update edges. */
+function ensureUniqueNodeIds(nodes: WorkflowNode[], edges: WorkflowEdge[]): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+  const seen = new Set<string>();
+  /** For each duplicated id, list of ids to use when rewriting edges (first = original, rest = new ids for duplicates). */
+  const remap = new Map<string, string[]>();
+  const newNodes: WorkflowNode[] = nodes.map((n, i) => {
+    if (seen.has(n.id)) {
+      const newId = `node-${Date.now()}-${i}`;
+      remap.get(n.id)!.push(newId);
+      seen.add(newId);
+      return { ...n, id: newId };
+    }
+    seen.add(n.id);
+    remap.set(n.id, [n.id]);
+    return { ...n, id: n.id };
+  });
+  if (remap.size === 0) return { nodes: newNodes, edges };
+  const newEdges: WorkflowEdge[] = edges.map(e => {
+    const srcList = remap.get(e.source);
+    const tgtList = remap.get(e.target);
+    return {
+      ...e,
+      source: srcList?.shift() ?? e.source,
+      target: tgtList?.shift() ?? e.target,
+    };
+  });
+  return { nodes: newNodes, edges: newEdges };
+}
+
 function apiToWorkflow(api: ApiWorkflow): Workflow {
+  const nodes = hydrateNodes(api.nodes);
+  const edges = hydrateEdges(api.edges);
+  const { nodes: uniqueNodes, edges: uniqueEdges } = ensureUniqueNodeIds(nodes, edges);
   return {
     id: api.id,
     name: api.name,
     description: api.description || '',
     status: (api.status || 'draft').toLowerCase() as 'draft' | 'active' | 'archived',
     lastEdited: api.updatedAt,
-    nodes: hydrateNodes(api.nodes),
-    edges: hydrateEdges(api.edges),
+    nodes: uniqueNodes,
+    edges: uniqueEdges,
+  };
+}
+
+function executionToRunLog(exec: ApiExecution): RunLog {
+  const runStatus: RunStatus =
+    exec.status === 'COMPLETED' ? 'success' :
+    exec.status === 'FAILED' ? 'error' :
+    exec.status === 'WAITING_FOR_REVIEW' ? 'waiting_review' :
+    'running';
+  const steps: RunStep[] = (exec.logs || []).map((log) => ({
+    nodeId: log.nodeId,
+    nodeTitle: log.nodeTitle,
+    status: log.status as RunStatus,
+    startedAt: log.startedAt,
+    completedAt: log.completedAt,
+    output: log.output,
+    error: log.error,
+  }));
+  return {
+    id: exec.id,
+    workflowId: exec.workflowId,
+    status: runStatus,
+    startedAt: exec.startedAt,
+    completedAt: exec.completedAt || undefined,
+    steps,
   };
 }
 
@@ -112,6 +172,10 @@ interface WorkflowState {
   activeWorkflowId: string | null;
   selectedNodeId: string | null;
   runLog: RunLog | null;
+  /** When latest run is in progress, steps from last completed run for Download/status fallback. */
+  lastCompletedRunLog: RunLog | null;
+  /** Node currently being run via Test node (shows spinner on that node). */
+  testingNodeId: string | null;
   saveStatus: 'saved' | 'saving' | 'unsaved';
   inspectorTab: 'config' | 'logs';
   isLoading: boolean;
@@ -153,7 +217,9 @@ interface WorkflowState {
   pushHistory: () => void;
 
   runWorkflow: () => void;
+  runSingleNode: (nodeId: string) => Promise<void>;
   rerunFromNode: (nodeId: string) => void;
+  resolveReview: (workflowId: string, executionId: string, stepId: string, action: 'approve' | 'edit', approvedEdl?: unknown) => Promise<unknown>;
 
   getActiveWorkflow: () => Workflow | undefined;
 }
@@ -166,6 +232,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   activeWorkflowId: null,
   selectedNodeId: null,
   runLog: null,
+  lastCompletedRunLog: null,
+  testingNodeId: null,
   saveStatus: 'saved',
   inspectorTab: 'config',
   isLoading: false,
@@ -201,12 +269,169 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           activeWorkflowId: id,
           selectedNodeId: null,
           runLog: null,
+          lastCompletedRunLog: null,
           isLoading: false,
           saveStatus: 'saved',
           history: [{ nodes: wf.nodes, edges: wf.edges }],
           historyIndex: 0,
         };
       });
+      // Restore run log and node status: use latest run when it is waiting for review or running (so
+      // Review draft / Approve use the correct execution id); otherwise use last completed/failed.
+      // When latest is in progress, use hybrid node status (idle steps get status from last completed)
+      // and set lastCompletedRunLog so Download video can use it. If no completed run is in the list,
+      // use workflow's persisted lastCompletedRunLog (saved when a run completed).
+      try {
+        const executions = await api.get<ApiExecution[]>(`/workflows/${id}/executions`);
+        const latest = executions?.[0];
+        const isInProgress = latest && (latest.status === 'WAITING_FOR_REVIEW' || latest.status === 'RUNNING');
+        const finished = executions?.find((e: ApiExecution) => e.status === 'COMPLETED' || e.status === 'FAILED');
+        const execToRestore = isInProgress ? latest : (finished ?? latest);
+        const workflowLastCompleted = data?.lastCompletedRunLog ?? null;
+
+        // When latest is in progress (e.g. WAITING_FOR_REVIEW), always restore runLog from the
+        // latest execution so the Review node keeps its step output (draftVideoUrl, projectId)
+        // and the video + Edit draft remain visible after reload. Use lastCompletedRunLog for
+        // Render Final / Download fallback when needed.
+        if (execToRestore) {
+          const runLog = executionToRunLog(execToRestore);
+          const lastCompletedRunLog =
+            isInProgress
+              ? (finished ? executionToRunLog(finished) : workflowLastCompleted)
+              : null;
+          set(state => ({
+            ...state,
+            runLog,
+            lastCompletedRunLog,
+            workflows: state.workflows.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    nodes: w.nodes.map(n => {
+                      if (isInProgress) {
+                        const stepLatest = latest?.logs?.find((l: ApiStepLog) => l.nodeId === n.id);
+                        const stepFinished = finished
+                          ? finished.logs?.find((l: ApiStepLog) => l.nodeId === n.id)
+                          : lastCompletedRunLog?.steps?.find((s) => s.nodeId === n.id);
+                        const status =
+                          stepLatest && stepLatest.status !== 'idle'
+                            ? (stepLatest.status as RunStatus)
+                            : (stepFinished?.status as RunStatus) ?? (stepLatest?.status as RunStatus);
+                        if (stepLatest || stepFinished) {
+                          return { ...n, data: { ...n.data, status: status ?? n.data.status } };
+                        }
+                      } else {
+                        const stepLog = execToRestore.logs?.find((l: ApiStepLog) => l.nodeId === n.id);
+                        if (stepLog) {
+                          return { ...n, data: { ...n.data, status: stepLog.status as RunStatus } };
+                        }
+                      }
+                      return n;
+                    }),
+                  }
+                : w
+            ),
+          }));
+        } else if (workflowLastCompleted) {
+          set(state => ({
+            ...state,
+            runLog: workflowLastCompleted,
+            lastCompletedRunLog: workflowLastCompleted,
+            workflows: state.workflows.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    nodes: w.nodes.map(n => {
+                      const stepLog = (workflowLastCompleted as RunLog).steps.find((s) => s.nodeId === n.id);
+                      if (stepLog) {
+                        return { ...n, data: { ...n.data, status: stepLog.status } };
+                      }
+                      return n;
+                    }),
+                  }
+                : w
+            ),
+          }));
+        } else if (data?.lastRunLog) {
+          // No executions (or empty list): restore from workflow's lastRunLog so Review node video etc. persist after reload
+          const runLog = data.lastRunLog;
+          const lastCompletedRunLog = data.lastCompletedRunLog ?? data.lastRunLog;
+          set(state => ({
+            ...state,
+            runLog,
+            lastCompletedRunLog,
+            workflows: state.workflows.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    nodes: w.nodes.map(n => {
+                      const stepLog = runLog.steps?.find((s) => s.nodeId === n.id);
+                      if (stepLog) {
+                        return { ...n, data: { ...n.data, status: stepLog.status as RunStatus } };
+                      }
+                      return n;
+                    }),
+                  }
+                : w
+            ),
+          }));
+        }
+      } catch (_) {
+        // Executions fetch failed: restore from workflow's lastRunLog so Review node video persists after reload
+        const runLog = data?.lastRunLog ?? null;
+        const lastCompletedRunLog = data?.lastCompletedRunLog ?? data?.lastRunLog ?? null;
+        if (runLog || lastCompletedRunLog) {
+          const logForStatus = runLog ?? lastCompletedRunLog;
+          set(state => ({
+            ...state,
+            runLog,
+            lastCompletedRunLog,
+            workflows: state.workflows.map(w =>
+              w.id === id && logForStatus
+                ? {
+                    ...w,
+                    nodes: w.nodes.map(n => {
+                      const stepLog = logForStatus.steps?.find((s) => s.nodeId === n.id);
+                      if (stepLog) {
+                        return { ...n, data: { ...n.data, status: stepLog.status as RunStatus } };
+                      }
+                      return n;
+                    }),
+                  }
+                : w
+            ),
+          }));
+        }
+      }
+
+      // Ensure Preview Output and all nodes keep step output after reload: if we still have no run
+      // state but the workflow has run log data, restore from it (covers any missed branch or race).
+      const state = get();
+      if (state.activeWorkflowId === id && !state.runLog && (data?.lastCompletedRunLog ?? data?.lastRunLog)) {
+        const runLog = data.lastRunLog ?? data.lastCompletedRunLog ?? null;
+        const lastCompletedRunLog = data.lastCompletedRunLog ?? data.lastRunLog ?? null;
+        if (runLog) {
+          set(s => ({
+            ...s,
+            runLog,
+            lastCompletedRunLog,
+            workflows: s.workflows.map(w =>
+              w.id === id
+                ? {
+                    ...w,
+                    nodes: w.nodes.map(n => {
+                      const stepLog = runLog.steps?.find((step) => step.nodeId === n.id);
+                      if (stepLog) {
+                        return { ...n, data: { ...n.data, status: stepLog.status as RunStatus } };
+                      }
+                      return n;
+                    }),
+                  }
+                : w
+            ),
+          }));
+        }
+      }
     } catch (err) {
       console.error('Failed to fetch workflow:', err);
       set({ isLoading: false });
@@ -266,6 +491,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       activeWorkflowId: id,
       selectedNodeId: null,
       runLog: null,
+      lastCompletedRunLog: null,
       history: wf ? [{ nodes: wf.nodes, edges: wf.edges }] : [],
       historyIndex: 0,
     });
@@ -474,7 +700,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       steps,
     };
 
-    set({ runLog, inspectorTab: 'logs' });
+    set({ runLog, lastCompletedRunLog: null, inspectorTab: 'logs' });
 
     // Save first, then execute on backend
     const doExecute = async () => {
@@ -487,6 +713,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             ...state.runLog,
             id: exec.id,
           } : null,
+          lastCompletedRunLog: null,
           executionPollingId: exec.id,
         }));
 
@@ -498,19 +725,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           try {
             const result = await api.get<ApiExecution>(`/workflows/${wf.id}/executions/${executionPollingId}`);
 
-            const updatedSteps: RunStep[] = result.logs.map(log => ({
+            const updatedSteps: RunStep[] = result.logs.map((log: ApiStepLog) => ({
               nodeId: log.nodeId,
               nodeTitle: log.nodeTitle,
-              status: log.status,
+              status: log.status as RunStatus,
               startedAt: log.startedAt,
               completedAt: log.completedAt,
               output: log.output,
               error: log.error,
+              reviewSessionId: log.reviewSessionId,
             }));
 
             const runStatus: RunStatus =
               result.status === 'COMPLETED' ? 'success' :
               result.status === 'FAILED' ? 'error' :
+              result.status === 'WAITING_FOR_REVIEW' ? 'waiting_review' :
               'running';
 
             set(state => ({
@@ -522,13 +751,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
                 completedAt: result.completedAt || undefined,
                 steps: updatedSteps,
               },
+              lastCompletedRunLog: null,
               workflows: state.workflows.map(w =>
                 w.id === activeWorkflowId
                   ? {
                       ...w,
                       nodes: w.nodes.map(n => {
                         const stepLog = result.logs.find(l => l.nodeId === n.id);
-                        if (stepLog && stepLog.status !== 'idle') {
+                        if (stepLog) {
                           return { ...n, data: { ...n.data, status: stepLog.status } };
                         }
                         return n;
@@ -554,11 +784,102 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         console.error('Execution failed:', err);
         set(state => ({
           runLog: state.runLog ? { ...state.runLog, status: 'error' } : null,
+          lastCompletedRunLog: null,
         }));
       }
     };
 
     doExecute();
+  },
+
+  runSingleNode: async (nodeId: string) => {
+    const wf = get().getActiveWorkflow();
+    if (!wf) return;
+    const { runLog } = get();
+    set({ testingNodeId: nodeId });
+    try {
+      await get().saveWorkflowToApi();
+      const priorExecutionId = runLog?.id ?? undefined;
+      const result = await api.post<{ stepLog: ApiStepLog }>(
+        `/workflows/${wf.id}/execute-node`,
+        { nodeId, priorExecutionId },
+      );
+      const step = result.stepLog;
+      const newStep: RunStep = {
+        nodeId: step.nodeId,
+        nodeTitle: step.nodeTitle,
+        status: step.status as RunStatus,
+        startedAt: step.startedAt,
+        completedAt: step.completedAt,
+        output: step.output,
+        error: step.error,
+        reviewSessionId: step.reviewSessionId,
+      };
+      set(state => {
+        const existingSteps = state.runLog?.steps ?? [];
+        const merged = existingSteps.some(s => s.nodeId === nodeId)
+          ? existingSteps.map(s => s.nodeId === nodeId ? newStep : s)
+          : [...existingSteps, newStep];
+        const runStatus: RunStatus =
+          step.status === 'error' ? 'error' :
+          step.status === 'waiting_review' ? 'waiting_review' : 'success';
+        return {
+          runLog: {
+            id: state.runLog?.id ?? 'test-single',
+            workflowId: wf.id,
+            status: runStatus,
+            startedAt: state.runLog?.startedAt ?? step.startedAt ?? new Date().toISOString(),
+            completedAt: step.completedAt ?? state.runLog?.completedAt,
+            steps: merged,
+          },
+          lastCompletedRunLog: null,
+          inspectorTab: 'logs',
+          workflows: state.workflows.map(w =>
+            w.id === wf.id
+              ? {
+                  ...w,
+                  nodes: w.nodes.map(n =>
+                    n.id === nodeId ? { ...n, data: { ...n.data, status: step.status as RunStatus } } : n
+                  ),
+                }
+              : w
+          ),
+        };
+      });
+    } catch (err) {
+      console.error('Test node failed:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Test node failed';
+      set(state => {
+        const newStep: RunStep = {
+          nodeId,
+          nodeTitle: state.workflows.flatMap(w => w.nodes).find(n => n.id === nodeId)?.data?.definition?.title ?? 'Node',
+          status: 'error',
+          error: errorMessage,
+        };
+        const existingSteps = state.runLog?.steps ?? [];
+        const merged = existingSteps.some(s => s.nodeId === nodeId)
+          ? existingSteps.map(s => s.nodeId === nodeId ? newStep : s)
+          : [...existingSteps, newStep];
+        return {
+          runLog: {
+            id: state.runLog?.id ?? 'test-single',
+            workflowId: wf.id,
+            status: 'error' as RunStatus,
+            startedAt: state.runLog?.startedAt ?? new Date().toISOString(),
+            steps: merged,
+          },
+          lastCompletedRunLog: null,
+          inspectorTab: 'logs',
+          workflows: state.workflows.map(w =>
+            w.id === wf.id
+              ? { ...w, nodes: w.nodes.map(n => (n.id === nodeId ? { ...n, data: { ...n.data, status: 'error' as RunStatus } } : n)) }
+              : w
+          ),
+        };
+      });
+    } finally {
+      set({ testingNodeId: null });
+    }
   },
 
   rerunFromNode: (_nodeId) => {
@@ -570,6 +891,40 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       ),
     }));
     get().runWorkflow();
+  },
+
+  resolveReview: async (workflowId: string, executionId: string, stepId: string, action: 'approve' | 'edit', approvedEdl?: unknown) => {
+    const exec = await api.post<ApiExecution>(
+      `/workflows/${workflowId}/executions/${executionId}/steps/${stepId}/resolve-review`,
+      { action, approvedEdl },
+    );
+    const steps: RunStep[] = (exec.logs || []).map((log: ApiStepLog) => ({
+      nodeId: log.nodeId,
+      nodeTitle: log.nodeTitle,
+      status: log.status as RunStatus,
+      startedAt: log.startedAt,
+      completedAt: log.completedAt,
+      output: log.output,
+      error: log.error,
+      reviewSessionId: log.reviewSessionId,
+    }));
+    const runStatus: RunStatus =
+      exec.status === 'COMPLETED' ? 'success' :
+      exec.status === 'FAILED' ? 'error' :
+      exec.status === 'WAITING_FOR_REVIEW' ? 'waiting_review' :
+      'running';
+    set({
+      runLog: {
+        id: exec.id,
+        workflowId: exec.workflowId,
+        status: runStatus,
+        startedAt: exec.startedAt,
+        completedAt: exec.completedAt || undefined,
+        steps,
+      },
+      lastCompletedRunLog: null,
+    });
+    return exec;
   },
 
   getActiveWorkflow: () => {

@@ -12,13 +12,20 @@ import {
 } from "../services/workflows";
 import {
   executeWorkflow,
+  executeSingleNode,
   getExecution,
   listExecutions,
+  rerunWorkflowFromFailed,
+  resolveReviewAndResume,
 } from "../services/execution";
 
 const router = Router();
 
 router.use(authenticate);
+
+function paramId(p: string | string[] | undefined): string {
+  return (Array.isArray(p) ? p[0] : p) ?? "";
+}
 
 const createSchema = z.object({
   name: z.string().min(1).max(200),
@@ -60,7 +67,7 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
 // GET /api/workflows/:id — detail
 router.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const workflow = await getWorkflow(req.params.id, req.user!.userId);
+    const workflow = await getWorkflow(paramId(req.params.id), req.user!.userId);
     res.json(workflow);
   } catch (err) {
     next(err);
@@ -74,7 +81,7 @@ router.put(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const workflow = await updateWorkflow(
-        req.params.id,
+        paramId(req.params.id),
         req.user!.userId,
         req.body,
       );
@@ -90,7 +97,7 @@ router.delete(
   "/:id",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      await deleteWorkflow(req.params.id, req.user!.userId);
+      await deleteWorkflow(paramId(req.params.id), req.user!.userId);
       res.json({ message: "Workflow deleted" });
     } catch (err) {
       next(err);
@@ -103,7 +110,7 @@ router.post(
   "/:id/duplicate",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const workflow = await duplicateWorkflow(req.params.id, req.user!.userId);
+      const workflow = await duplicateWorkflow(paramId(req.params.id), req.user!.userId);
       res.status(201).json(workflow);
     } catch (err) {
       next(err);
@@ -116,7 +123,44 @@ router.post(
   "/:id/execute",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const execution = await executeWorkflow(req.params.id, req.user!.userId);
+      const execution = await executeWorkflow(paramId(req.params.id), req.user!.userId);
+      res.status(201).json(execution);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/workflows/:id/execute-node — run only one node (Test Node); does not affect other nodes
+router.post(
+  "/:id/execute-node",
+  validate(z.object({ nodeId: z.string().min(1), priorExecutionId: z.string().optional() })),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await executeSingleNode(
+        paramId(req.params.id),
+        req.body.nodeId,
+        req.user!.userId,
+        req.body.priorExecutionId,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/workflows/:id/rerun — re-queue from first failed node (body: { executionId })
+router.post(
+  "/:id/rerun",
+  validate(z.object({ executionId: z.string().min(1) })),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const execution = await rerunWorkflowFromFailed(
+        paramId(req.params.id),
+        req.body.executionId,
+        req.user!.userId,
+      );
       res.status(201).json(execution);
     } catch (err) {
       next(err);
@@ -130,7 +174,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const executions = await listExecutions(
-        req.params.id,
+        paramId(req.params.id),
         req.user!.userId,
       );
       res.json(executions);
@@ -140,14 +184,42 @@ router.get(
   },
 );
 
-// GET /api/executions/:execId — single execution detail
+// GET /api/workflows/:id/executions/:execId — single execution detail
 router.get(
   "/:id/executions/:execId",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const execution = await getExecution(
-        req.params.execId,
+        paramId(req.params.execId),
         req.user!.userId,
+      );
+      res.json(execution);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const resolveReviewSchema = z.object({
+  action: z.enum(["approve", "edit"]),
+  approvedEdl: z.record(z.string(), z.unknown()).optional(),
+});
+
+// POST /api/workflows/:id/executions/:execId/steps/:stepId/resolve-review
+router.post(
+  "/:id/executions/:execId/steps/:stepId/resolve-review",
+  validate(resolveReviewSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workflowId = paramId(req.params.id);
+      const executionId = paramId(req.params.execId);
+      const stepId = paramId(req.params.stepId);
+      const execution = await resolveReviewAndResume(
+        workflowId,
+        executionId,
+        stepId,
+        req.user!.userId,
+        { action: req.body.action, approvedEdl: req.body.approvedEdl },
       );
       res.json(execution);
     } catch (err) {

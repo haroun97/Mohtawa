@@ -119,6 +119,23 @@ export const nodeDefinitions: NodeDefinition[] = [
       { name: 'description', label: 'Description', type: 'text', placeholder: 'Male, warm, professional' },
     ],
   },
+  {
+    type: 'voice.tts',
+    category: 'voice',
+    title: 'My Voice (Clone) → Generate Voiceover',
+    description: 'Generate voiceover using your cloned voice profile (ElevenLabs or Azure)',
+    icon: 'Mic',
+    inputs: ['text'],
+    outputs: ['audio'],
+    fields: [
+      { name: 'voiceProfileId', label: 'Voice Profile', type: 'text', placeholder: 'Select or create in Voice profiles', required: true, help: 'Create a profile in Voice Profiles (user menu) and select it here' },
+      { name: 'format', label: 'Format', type: 'select', options: ['mp3', 'wav'], defaultValue: 'mp3' },
+      { name: 'text', label: 'Text', type: 'textarea', placeholder: 'Enter text or use upstream input', help: 'Leave empty to use text from connected node' },
+      { name: 'stability', label: 'Stability (0–1)', type: 'number', defaultValue: 0.5, help: 'ElevenLabs: voice consistency' },
+      { name: 'similarityBoost', label: 'Similarity Boost (0–1)', type: 'number', defaultValue: 0.75, help: 'ElevenLabs: clone similarity' },
+      { name: 'speakingRate', label: 'Speaking Rate', type: 'number', defaultValue: 1.0, help: 'Azure: 0.5–2.0' },
+    ],
+  },
 
   // ─── VIDEO ─────────────────────────────────────────
   {
@@ -147,6 +164,49 @@ export const nodeDefinitions: NodeDefinition[] = [
     fields: [
       { name: 'transition', label: 'Transition', type: 'select', options: ['None', 'Crossfade', 'Wipe', 'Slide'], defaultValue: 'Crossfade' },
       { name: 'transitionDuration', label: 'Transition Duration (s)', type: 'number', defaultValue: 0.5 },
+    ],
+  },
+  {
+    type: 'video.auto_edit',
+    category: 'video',
+    title: 'Auto Edit (Draft)',
+    description: 'Automated edit from clips + voiceover; outputs EDL and draft video',
+    icon: 'Film',
+    inputs: ['clips', 'voiceover', 'captions'],
+    outputs: ['output'],
+    fields: [
+      { name: 'clips', label: 'Clips (JSON)', type: 'textarea', placeholder: '[{"url":"https://example.com/clip.mp4","durationSec":10}]', help: 'Array of {url, durationSec?}. Use for testing or when no upstream clips.' },
+      { name: 'voiceoverUrl', label: 'Voiceover URL', type: 'text', placeholder: 'https://... or s3://... (or connect Voice TTS to voiceover input)', help: 'Required if no Voice TTS node is connected. Paste an audio URL or use Upload in Voice node.' },
+      { name: 'aspectRatio', label: 'Aspect Ratio', type: 'select', options: ['9:16', '1:1', '16:9'], defaultValue: '9:16' },
+      { name: 'stylePreset', label: 'Style', type: 'select', options: ['documentary', 'energetic', 'calm'], defaultValue: 'documentary' },
+      { name: 'minClipSec', label: 'Min clip (s)', type: 'number', defaultValue: 1.5 },
+      { name: 'maxClipSec', label: 'Max clip (s)', type: 'number', defaultValue: 3.5 },
+      { name: 'enableMusic', label: 'Enable music', type: 'toggle', defaultValue: false },
+    ],
+  },
+  {
+    type: 'video.render_final',
+    category: 'video',
+    title: 'Render Final',
+    description: 'Render final video from approved EDL',
+    icon: 'Film',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [],
+  },
+
+  // ─── REVIEW ────────────────────────────────────────
+  {
+    type: 'review.approval_gate',
+    category: 'review',
+    title: 'Review / Approve',
+    description: 'Pause for human review; approve or edit EDL then continue',
+    icon: 'CheckCircle',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'mode', label: 'Mode', type: 'select', options: ['auto_approve', 'manual_review', 'manual_with_timeout'], defaultValue: 'manual_review' },
+      { name: 'autoApproveAfterSec', label: 'Auto-approve after (s)', type: 'number', placeholder: '3600', help: 'Only when mode is manual_with_timeout' },
     ],
   },
 
@@ -305,6 +365,16 @@ export const nodeDefinitions: NodeDefinition[] = [
       { name: 'logLevel', label: 'Level', type: 'select', options: ['info', 'warn', 'error', 'debug'], defaultValue: 'info' },
     ],
   },
+  {
+    type: 'preview-output',
+    category: 'utility',
+    title: 'Preview Output',
+    description: 'View and play the output of the previous node (e.g. audio from Voice TTS)',
+    icon: 'PlayCircle',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [],
+  },
 ];
 
 export const categoryLabels: Record<string, string> = {
@@ -315,6 +385,7 @@ export const categoryLabels: Record<string, string> = {
   social: 'Social',
   logic: 'Logic',
   utility: 'Utilities',
+  review: 'Review',
 };
 
-export const categoryOrder = ['trigger', 'ai', 'voice', 'video', 'social', 'logic', 'utility'];
+export const categoryOrder = ['trigger', 'ai', 'voice', 'video', 'review', 'social', 'logic', 'utility'];

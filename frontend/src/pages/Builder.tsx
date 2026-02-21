@@ -7,6 +7,7 @@ import { FlowCanvas } from '@/components/builder/FlowCanvas';
 import { InspectorPanel } from '@/components/builder/InspectorPanel';
 import { CommandPalette } from '@/components/builder/CommandPalette';
 import { WorkflowMetaDialog } from '@/components/builder/WorkflowMetaDialog';
+import { EdlEditor } from '@/components/builder/EdlEditor';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 
@@ -20,6 +21,7 @@ export default function Builder() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(true);
+  const [edlEditorProjectId, setEdlEditorProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -95,10 +97,17 @@ export default function Builder() {
       <div className="flex flex-1 overflow-hidden">
         {libraryOpen && <NodeLibrary />}
         <FlowCanvas />
-        <InspectorPanel />
+        <InspectorPanel onOpenEdlEditor={setEdlEditorProjectId} />
       </div>
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
       <WorkflowMetaDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {edlEditorProjectId != null && (
+        <EdlEditor
+          projectId={edlEditorProjectId}
+          onClose={() => setEdlEditorProjectId(null)}
+          onSaved={() => setEdlEditorProjectId(null)}
+        />
+      )}
     </div>
   );
 }
