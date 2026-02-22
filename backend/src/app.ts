@@ -18,9 +18,13 @@ const app = express();
 // Security headers
 app.use(helmet());
 
+// Allow multiple origins (comma-separated in CORS_ORIGIN) for e.g. localhost + LAN IP (iPhone)
+const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:8080";
+const corsOrigins = corsOrigin.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "http://localhost:8080",
+    origin: corsOrigins.length > 1 ? corsOrigins : corsOrigins[0],
     credentials: true,
   }),
 );
@@ -45,10 +49,10 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// General API rate limit
+// General API rate limit (allow execution polling + normal UI without 429)
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute
+  max: 200, // 200 requests per minute (polling every 2s ≈ 30/min per run + headroom)
   message: { error: "Rate limit exceeded. Please slow down." },
   standardHeaders: true,
   legacyHeaders: false,

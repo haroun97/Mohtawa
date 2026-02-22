@@ -148,13 +148,13 @@ export default function Settings() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 min-h-[48px] md:min-h-0 md:h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => navigate('/')}
-              className="rounded-full"
+              className="rounded-full min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -166,7 +166,7 @@ export default function Settings() {
               variant="ghost"
               size="icon"
               onClick={toggle}
-              className="rounded-full"
+              className="rounded-full min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8"
               aria-label="Toggle theme"
             >
               {isDark() ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -175,7 +175,7 @@ export default function Settings() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-10">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         {/* API Keys section */}
         <Card>
           <CardHeader>

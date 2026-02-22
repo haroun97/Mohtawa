@@ -4,7 +4,7 @@
 
 **Date:** February 20, 2026
 **Methodology:** Iterative (phase-based MVP approach)
-**Last updated:** Phase 7a EDL Editor Phase 1 UI/UX rework (Instagram Edits–style) implemented; planning doc updated.
+**Last updated:** Phase 7a — Overlay editing in editor done; next priority: Desktop optional right panel for tools.
 
 ---
 
@@ -20,6 +20,7 @@
 8. [Data Model](#8-data-model)
 9. [API Routes](#9-api-routes)
 10. [Risk Register](#10-risk-register)
+11. [Mobile Responsiveness](#11-mobile-responsiveness)
 
 ---
 
@@ -554,9 +555,10 @@ Structure code so that adding a new renderer does not require changing the EDL s
 | Priority | Item | Notes |
 |----------|------|-------|
 | 1 | ~~**Phase 7a Phase 1 UI rework**~~ | ✅ Done: full-screen editor, top bar (Export, save indicator), 9:16 preview, thumbnail timeline, bottom tool bar, tool sheets (Adjust, Audio, Captions, Trim), edlEditorStore, keyboard shortcuts. |
-| 2 | **Real clip thumbnails in timeline** | Timeline currently shows label + duration per clip; add tiny thumbnail frame per clip (e.g. video frame at `inSec` or placeholder) for Instagram-like look. May require backend thumbnail endpoint or client-side video decode. |
-| 3 | **Split clip (UI + backend)** | Add “Split” to tool bar; when backend supports split (new clip + updated inSec/outSec), show Split in editor; otherwise keep hidden. |
-| 4 | **Overlay editing in editor** | Add/remove text overlays; edit overlay text, startSec, endSec (currently only style preset in Captions sheet; full overlay edit is JSON-only). |
+| 2 | ~~**Real clip thumbnails in timeline**~~ | ✅ Done: timeline resolves S3 clip URLs to presigned play URLs; `VideoThumbnailStrip` shows frame at `inSec` (or Film placeholder until loaded / when URL not playable). Client-side decode only; optional backend thumbnail endpoint deferred. |
+| 2.5 | ~~**Mobile edit page: clickable + timeline scroll**~~ | ✅ Done: editor portaled to `document.body` from Builder; Inspector sheet closed when opening editor (avoids Radix body `pointer-events: none`); body pointer-events safeguard in EdlEditor; focus on close button on mount (rAF); timeline clips `touch-pan-x` for horizontal scroll; SortableVideoClip mergedRef. |
+| 3 | ~~**Split clip (UI + backend)**~~ | ✅ Done: Split at playhead in ContextualActionBar (video clip + playhead inside); keyboard S; 44px touch targets; EDL on Save; multi-clip supported. |
+| 4 | ~~**Overlay editing in editor**~~ | ✅ Done: Captions sheet edits text, startSec, endSec, style; add/remove overlays; Delete overlay in ContextualActionBar + Delete key; clamping; Text track “Add captions” button when empty opens Captions panel.
 | 5 | **Desktop: optional right panel for tools** | On desktop, consider showing active tool controls in a right-side panel instead of (or in addition to) bottom sheet for faster access. |
 | 6 | **Delete selected clip** | If backend supports removing a clip from EDL (reflow startSec), add Delete to tool bar and Del keyboard shortcut. |
 
@@ -588,6 +590,59 @@ Structure code so that adding a new renderer does not require changing the EDL s
 - Team collaboration and shared workspaces.
 - Analytics dashboard for content performance.
 - Marketplace for community node plugins.
+
+---
+
+## 11. Mobile Responsiveness
+
+**Status:** Implemented (February 2026). App-wide mobile-responsive layout and controls.
+
+**Goal:** Make the whole app usable on phones and tablets: touch-friendly targets, no horizontal overflow, key flows (dashboard, builder, editor, auth, settings) work on viewports &lt;768px.
+
+### Investigation summary (what was done)
+
+| Area | Before | After |
+|------|--------|--------|
+| **Viewport** | `index.html` already had `width=device-width, initial-scale=1` | No change. |
+| **Breakpoint** | `useIsMobile()` at 768px used in Editor and Sidebar | Reused across Builder, TopBar, Inspector, NodeLibrary. |
+| **Dashboard** | Responsive grid and `sm:` for header; fixed `px-6` | Responsive padding `px-4 sm:px-6`; header/main consistent. |
+| **Login / Register** | Split layout with `lg:hidden` branding on small screens | Already good; optional `p-4 sm:p-6` for form area. |
+| **Settings** | `max-w-4xl`, `sm:grid-cols-2` in add-key form | Responsive header/main padding. |
+| **Voice Profiles** | Grid and dropdown already responsive | Responsive header/main padding; file input + button wrap. |
+| **Builder** | Fixed sidebars: NodeLibrary 260px, Inspector 340px; TopBar dense | **NodeLibrary:** Sheet (left) on mobile when toggled. **InspectorPanel:** Sheet (right) on mobile when node selected or logs present. **TopBar:** Icon-only Run on small screens; responsive padding; workflow name truncation. |
+| **FlowCanvas** | ReactFlow with Controls + MiniMap | No layout change; canvas gets full flex area when panels are sheets. |
+| **EDL Editor** | Already mobile-first: bottom sheets, tool bar, 9:16 preview | **EditorTopBar:** Export button icon-only on very small screens. Timeline and ToolBar already scroll/touch-friendly. |
+| **Command palette** | Dialog-based | Full-screen dialog on small viewports (DialogContent responsive). |
+| **Dialogs / Sheets** | shadcn Dialog and Sheet | Left/right sheets use `w-3/4 sm:max-w-sm`; dialogs scroll when content overflows. |
+
+### Tasks completed
+
+| # | Task | Status |
+|---|------|--------|
+| 11.1 | Dashboard, Settings, VoiceProfiles: responsive container padding (`px-4 sm:px-6`) | Done |
+| 11.2 | Builder: On mobile (&lt;768px), NodeLibrary opens in Sheet (left) instead of fixed sidebar | Done |
+| 11.3 | Builder: On mobile, InspectorPanel opens in Sheet (right) when node selected or run log present | Done |
+| 11.4 | TopBar: Responsive padding; Run button icon-only on small screens; workflow name truncation | Done |
+| 11.5 | EditorTopBar: Export button icon-only on very small screens (optional) | Done |
+| 11.6 | Ensure all Dialog/Sheet content scrolls on small height (overflow-y-auto) | Verified (shadcn defaults) |
+
+### Optional items (implemented)
+
+| Priority | Item | Status |
+|----------|------|--------|
+| 1 | **Touch-friendly hit areas** | Done: min 44px touch targets on Builder TopBar, EditorTopBar, EDL ToolBar, Dashboard/Settings/VoiceProfiles headers and primary actions, NodeLibrary rows; workflow card menu trigger visible and 44px on mobile. |
+| 2 | **ReactFlow on mobile** | Done: MiniMap hidden on viewports &lt;768px; Controls moved to bottom-left on mobile for thumb reach, bottom-right on desktop. |
+| 3 | **Toaster position** | Done: ResponsiveToaster uses bottom-center on mobile and bottom-right on desktop. |
+
+### Builder & Inspector UX refinements (implemented)
+
+| # | Item | Status |
+|---|------|--------|
+| 11.7 | **Mobile Inspector:** Sheet only opens when a node is selected (not when only run log exists), so the canvas is not hidden on workflow entry; sheet re-opens when tapping a node after closing. | Done |
+| 11.8 | **Node list closed by default:** `libraryOpen` initial state set to `false` so the node library does not open automatically when entering the builder. | Done |
+| 11.9 | **Clear-search X outside search bar:** Node library search has a dedicated clear button (X) to the right of the input, outside the search bar; shows only when search has text. | Done |
+| 11.10 | **Single close in log/Inspector window:** On mobile, Inspector sheet uses `hideCloseButton` on SheetContent so only one close (X) appears in the panel header, not two overlapping. | Done |
+| 11.11 | **Mobile node list: close-panel X outside search bar:** Node list Sheet uses `hideCloseButton`; NodeLibraryContent accepts `onClose` and renders a header row (“Nodes” + close X) above the search bar so the close-panel control is clearly outside the search area. | Done |
 
 ---
 

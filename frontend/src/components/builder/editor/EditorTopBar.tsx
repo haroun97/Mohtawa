@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type RefObject } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, Loader2, Download, ChevronDown, Undo2, Redo2 } from 'lucide-react';
 import { ExportModal, type ExportOptions, type ExportResolution, type ExportFps } from './ExportModal';
@@ -18,6 +18,8 @@ interface EditorTopBarProps {
   canRedo?: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
+  /** Ref for the close button; parent can focus it when editor opens (e.g. for mobile). */
+  closeButtonRef?: RefObject<HTMLButtonElement | null>;
 }
 
 /** Map height-based resolution to short badge label (e.g. 1080p -> HD). */
@@ -43,6 +45,7 @@ export function EditorTopBar({
   canRedo = false,
   onUndo,
   onRedo,
+  closeButtonRef,
 }: EditorTopBarProps) {
   const [exportModalOpen, setExportModalOpen] = useState(false);
 
@@ -56,13 +59,14 @@ export function EditorTopBar({
 
   return (
     <>
-      <header className="flex items-center justify-between gap-2 border-b border-border bg-background/95 px-3 py-2 flex-shrink-0">
+      <header className="flex items-center justify-between gap-2 border-b border-border bg-background/95 px-3 py-2 flex-shrink-0 min-h-[48px] md:min-h-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <Button
+            ref={closeButtonRef}
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="shrink-0 rounded-full h-9 w-9"
+            className="shrink-0 rounded-full h-9 min-h-[44px] min-w-[44px] md:min-h-9 md:min-w-9 w-9"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -73,7 +77,7 @@ export function EditorTopBar({
               size="icon"
               onClick={onUndo}
               disabled={!canUndo}
-              className="shrink-0 h-8 w-8"
+              className="shrink-0 h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 w-8"
               aria-label="Undo"
               title="Undo"
             >
@@ -84,7 +88,7 @@ export function EditorTopBar({
               size="icon"
               onClick={onRedo}
               disabled={!canRedo}
-              className="shrink-0 h-8 w-8"
+              className="shrink-0 h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 w-8"
               aria-label="Redo"
               title="Redo"
             >
@@ -116,14 +120,15 @@ export function EditorTopBar({
             size="sm"
             onClick={handleExportClick}
             disabled={exportDisabled}
-            className="gap-1.5"
+            className="gap-1.5 px-2 sm:px-3 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8"
+            title="Export"
           >
             {exporting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Download className="h-4 w-4" />
             )}
-            Export
+            <span className="hidden sm:inline">Export</span>
           </Button>
         </div>
       </header>

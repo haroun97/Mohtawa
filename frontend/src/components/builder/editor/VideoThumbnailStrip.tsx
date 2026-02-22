@@ -11,9 +11,17 @@ interface VideoThumbnailStripProps {
   thumbnailUrl?: string | null;
 }
 
+/** True if the URL can be used in a video/src (browser cannot load s3://). Exported for tests. */
+export function isPlayableUrl(url: string): boolean {
+  return Boolean(
+    url &&
+      (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:'))
+  );
+}
+
 /**
- * Video track segment thumbnail. MVP: single repeated frame or placeholder.
- * Long-term: multiple frames from backend along clip width.
+ * Video track segment thumbnail. Shows a frame at inSec (or placeholder).
+ * Uses resolved presigned URL when clipUrl is S3; otherwise requires playable clipUrl.
  */
 export function VideoThumbnailStrip({
   clipUrl,
@@ -25,15 +33,20 @@ export function VideoThumbnailStrip({
 }: VideoThumbnailStripProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [loaded, setLoaded] = useState(false);
+  const playable = isPlayableUrl(clipUrl);
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [clipUrl, inSec]);
 
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || !clipUrl || thumbnailUrl) return;
+    if (!v || !playable || thumbnailUrl) return;
     v.currentTime = inSec;
     const onSeeked = () => setLoaded(true);
     v.addEventListener('seeked', onSeeked);
     return () => v.removeEventListener('seeked', onSeeked);
-  }, [clipUrl, inSec, thumbnailUrl]);
+  }, [clipUrl, inSec, playable, thumbnailUrl]);
 
   if (thumbnailUrl) {
     return (
@@ -41,6 +54,17 @@ export function VideoThumbnailStrip({
         className="absolute inset-0 bg-cover bg-center bg-no-repeat w-full h-full"
         style={{ backgroundImage: `url(${thumbnailUrl})` }}
       />
+    );
+  }
+
+  if (!playable) {
+    return (
+      <div
+        className="relative w-full h-full overflow-hidden bg-muted flex items-center justify-center"
+        style={{ minHeight: heightPx }}
+      >
+        <Film className="h-6 w-6 text-muted-foreground" />
+      </div>
     );
   }
 

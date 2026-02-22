@@ -18,6 +18,7 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import { nodeDefinitions } from '@/store/nodeDefinitions';
 import { WorkflowNodeComponent } from './WorkflowNode';
 import { WorkflowNode } from '@/types/workflow';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 const nodeTypes = {
   workflowNode: WorkflowNodeComponent,
@@ -97,7 +98,7 @@ function FlowCanvasInner() {
 
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     for (const change of changes) {
-      if (change.type === 'position' && change.position && change.dragging === false) {
+      if (change.type === 'position' && change.position != null) {
         updateNodePosition(change.id, change.position);
       }
       if (change.type === 'remove') {
@@ -145,6 +146,8 @@ function FlowCanvasInner() {
     addNodeAction(newNode);
   }, [screenToFlowPosition, addNodeAction]);
 
+  const isMobile = useIsMobile();
+
   return (
     <div ref={reactFlowWrapper} className="flex-1 h-full">
       <ReactFlow
@@ -167,13 +170,15 @@ function FlowCanvasInner() {
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-40" />
-        <Controls className="rounded-lg" />
-        <MiniMap
-          nodeStrokeWidth={3}
-          zoomable
-          pannable
-          className="rounded-lg"
-        />
+        <Controls className="rounded-lg !left-2 !right-auto md:!left-auto md:!right-2" />
+        {!isMobile && (
+          <MiniMap
+            nodeStrokeWidth={3}
+            zoomable
+            pannable
+            className="rounded-lg"
+          />
+        )}
       </ReactFlow>
     </div>
   );

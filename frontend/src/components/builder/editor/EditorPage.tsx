@@ -1,10 +1,10 @@
-import { useState, useCallback, useEffect, type RefObject } from 'react';
+import { useState, useCallback, useEffect, useRef, type RefObject } from 'react';
 import { motion } from 'framer-motion';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { PreviewPlayer } from './PreviewPlayer';
 import { TimelineTracks } from './TimelineTracks';
 import { ContextualActionBar } from './ContextualActionBar';
-import { SlipPanel } from './SlipPanel';
+import { SlipModeOverlay } from './SlipModeOverlay';
 import { EditorTopBar } from './EditorTopBar';
 import { AdjustSheet, AdjustSheetContent } from './AdjustSheet';
 import { AudioSheet, AudioSheetContent } from './AudioSheet';
@@ -19,6 +19,8 @@ interface EditorPageProps {
   projectName?: string;
   edl: EDL;
   playUrl: string | null;
+  /** Resolved playable URLs for timeline clips (index matches edl.timeline). Used for thumbnails. */
+  resolvedClipUrls?: (string | null)[];
   onEdlChange: (patch: Partial<EDL> | ((prev: EDL) => EDL)) => void;
   onClose: () => void;
   onExport: (options?: import('./ExportModal').ExportOptions) => void;
@@ -32,6 +34,7 @@ interface EditorPageProps {
   setClipSlipInAbsolute?: (index: number, newInSec: number) => void;
   setOverlayTrim?: (overlayIndex: number, field: 'startSec' | 'endSec', value: number) => void;
   onDeleteClip?: (index: number) => void;
+  onDeleteOverlay?: (overlayIndex: number) => void;
   onDuplicateClip?: (index: number) => void;
   onSplitClipAtPlayhead?: (clipIndex: number, playheadSec: number) => void;
   videoRef?: RefObject<HTMLVideoElement | null>;
@@ -46,6 +49,7 @@ export function EditorPage({
   projectName,
   edl,
   playUrl,
+  resolvedClipUrls = [],
   onEdlChange,
   onClose,
   onExport,
@@ -59,6 +63,7 @@ export function EditorPage({
   setClipSlipInAbsolute,
   setOverlayTrim,
   onDeleteClip,
+  onDeleteOverlay,
   onDuplicateClip,
   onSplitClipAtPlayhead,
   videoRef,
@@ -68,16 +73,38 @@ export function EditorPage({
   onRedo,
 }: EditorPageProps) {
   const isMobile = useIsMobile();
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+
+  // Move focus into the editor when content mounts so mobile treats it as the active layer (fixes unclickable / no scroll until Export tapped).
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      closeButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   const selectedBlock = edlEditorStore((s) => s.selectedBlock);
   const setSelectedBlock = edlEditorStore((s) => s.setSelectedBlock);
   const setActiveTool = edlEditorStore((s) => s.setActiveTool);
   const slipMode = edlEditorStore((s) => s.slipMode);
   const slipClipId = edlEditorStore((s) => s.slipClipId);
+  const slipOriginalInSec = edlEditorStore((s) => s.slipOriginalInSec);
+  const setSlipOriginalInSec = edlEditorStore((s) => s.setSlipOriginalInSec);
+  const prevSlipActive = useRef(false);
+  useEffect(() => {
+    const now = slipMode && slipClipId != null;
+    if (now && !prevSlipActive.current) {
+      const idx = edl.timeline.findIndex((c) => (c.id ?? '') === slipClipId);
+      const clip = edl.timeline[idx];
+      if (clip != null) setSlipOriginalInSec(clip.inSec);
+    }
+    if (!now) setSlipOriginalInSec(null);
+    prevSlipActive.current = !!now;
+  }, [slipMode, slipClipId, edl.timeline, setSlipOriginalInSec]);
 
   const totalDuration = edl.timeline.reduce(
     (acc, c) => acc + Math.max(0.04, c.outSec - c.inSec),
@@ -90,6 +117,12 @@ export function EditorPage({
     selectedClipId == null
       ? null
       : edl.timeline.findIndex((c) => (c.id ?? '') === selectedClipId);
+
+  const selectedOverlayIndex =
+    selectedBlock?.type === 'text'
+      ? edl.overlays.findIndex((o, i) => (o.id ?? `overlay-${i}`) === selectedBlock.id)
+      : null;
+  const selectedOverlayIndexResolved = selectedOverlayIndex !== -1 ? selectedOverlayIndex : null;
 
   const handleSelectClip = useCallback(
     (index: number) => {
@@ -144,6 +177,21 @@ export function EditorPage({
       return playheadSec > segStart && playheadSec < segEnd;
     })();
 
+  // Keyboard: S = split at playhead (desktop and mobile keyboard)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 's' && e.key !== 'S') return;
+      if (e.metaKey || e.ctrlKey) return; // leave Cmd/Ctrl+S for save
+      const target = e.target as Node;
+      if (target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+      if (!canSplitAtPlayhead || selectedClipIndex == null || !onSplitClipAtPlayhead) return;
+      e.preventDefault();
+      onSplitClipAtPlayhead(selectedClipIndex, playheadSec);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canSplitAtPlayhead, selectedClipIndex, playheadSec, onSplitClipAtPlayhead]);
+
   const resolution =
     edl.output && edl.output.width && edl.output.height
       ? `${edl.output.height}p`
@@ -156,12 +204,32 @@ export function EditorPage({
 
   return (
     <motion.div
-      className="fixed inset-0 z-[200] flex flex-col bg-background"
+      className="fixed inset-0 z-[200] flex flex-col bg-background min-h-[100dvh]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
     >
+      {slipMode && slipClipId != null && setClipSlipInAbsolute && (() => {
+        const idx = edl.timeline.findIndex((c) => (c.id ?? '') === slipClipId);
+        const slipClip = idx >= 0 ? edl.timeline[idx] : null;
+        const resolvedUrl = resolvedClipUrls[idx] ?? slipClip?.clipUrl ?? null;
+        const originalIn = slipOriginalInSec ?? slipClip?.inSec ?? 0;
+        return slipClip != null ? (
+          <SlipModeOverlay
+            clip={slipClip}
+            clipIndex={idx}
+            resolvedClipUrl={resolvedUrl}
+            setClipSlipInAbsolute={setClipSlipInAbsolute}
+            onConfirm={() => edlEditorStore.getState().setSlipMode(false)}
+            onCancel={() => {
+              setClipSlipInAbsolute(idx, originalIn);
+              edlEditorStore.getState().setSlipMode(false);
+            }}
+          />
+        ) : null;
+      })()}
+
       <EditorTopBar
         projectName={projectName}
         resolution={resolution}
@@ -177,6 +245,7 @@ export function EditorPage({
         canRedo={canRedo}
         onUndo={onUndo}
         onRedo={onRedo}
+        closeButtonRef={closeButtonRef}
       />
 
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -195,21 +264,11 @@ export function EditorPage({
               />
             </section>
             <section className="flex-shrink-0 pt-3 flex flex-col gap-2">
-              {slipMode && slipClipId != null && setClipSlipInAbsolute && (() => {
-                const idx = edl.timeline.findIndex((c) => (c.id ?? '') === slipClipId);
-                const slipClip = idx >= 0 ? edl.timeline[idx] : null;
-                return slipClip ? (
-                  <SlipPanel
-                    clip={slipClip}
-                    clipIndex={idx}
-                    setClipSlipInAbsolute={setClipSlipInAbsolute}
-                  />
-                ) : null;
-              })()}
               <TimelineTracks
                 edl={edl}
                 playheadSec={playheadSec}
                 videoDuration={videoDuration}
+                resolvedClipUrls={resolvedClipUrls}
                 onReorder={handleReorder}
                 onSelectClip={handleSelectClip}
                 setClipTrim={setClipTrim}
@@ -256,6 +315,12 @@ export function EditorPage({
           onEdit={undefined}
           onDeleteClip={selectedClipIndex != null ? () => onDeleteClip?.(selectedClipIndex) : undefined}
           canDeleteClip={selectedClipIndex != null && edl.timeline.length > 1}
+          onDeleteOverlay={
+            selectedOverlayIndexResolved != null && onDeleteOverlay
+              ? () => onDeleteOverlay(selectedOverlayIndexResolved)
+              : undefined
+          }
+          canDeleteOverlay={selectedOverlayIndexResolved != null}
           onDuplicateClip={selectedClipIndex != null ? () => onDuplicateClip?.(selectedClipIndex) : undefined}
           onSplitClipAtPlayhead={
             selectedClipIndex != null && onSplitClipAtPlayhead

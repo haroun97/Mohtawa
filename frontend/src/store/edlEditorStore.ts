@@ -15,21 +15,30 @@ export const edlEditorStore = create<{
   saveStatus: 'idle' | 'saving' | 'saved';
   slipMode: boolean;
   slipClipId: string | null;
+  /** Captured clip.inSec when entering slip mode; used to revert on Cancel. */
+  slipOriginalInSec: number | null;
   setSelectedBlock: (block: SelectedBlock) => void;
   setActiveTool: (tool: EditorTool) => void;
   setSaveStatus: (status: 'idle' | 'saving' | 'saved') => void;
   setSlipMode: (active: boolean, clipId?: string | null) => void;
+  setSlipOriginalInSec: (value: number | null) => void;
 }>((set) => ({
   selectedBlock: null,
   activeTool: null,
   saveStatus: 'idle',
   slipMode: false,
   slipClipId: null,
+  slipOriginalInSec: null,
   setSelectedBlock: (block) => set({ selectedBlock: block }),
   setActiveTool: (tool) => set({ activeTool: tool }),
   setSaveStatus: (status) => set({ saveStatus: status }),
   setSlipMode: (active, clipId) =>
-    set({ slipMode: active, slipClipId: active ? clipId ?? null : null }),
+    set({
+      slipMode: active,
+      slipClipId: active ? clipId ?? null : null,
+      ...(active ? {} : { slipOriginalInSec: null }),
+    }),
+  setSlipOriginalInSec: (value) => set({ slipOriginalInSec: value }),
 }));
 
 /** Selected video clip id when selectedBlock.type === 'video'. */

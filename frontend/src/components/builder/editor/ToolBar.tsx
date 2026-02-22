@@ -39,7 +39,7 @@ export function ToolBar({ onDeleteClip, canDelete = false }: ToolBarProps) {
               onClick={() => !disabled && setActiveTool(isActive ? null : id)}
               disabled={disabled}
               className={cn(
-                'flex flex-col items-center gap-0.5 rounded-lg px-4 py-2 min-w-[64px] transition-colors',
+                'flex flex-col items-center justify-center gap-0.5 rounded-lg px-4 py-2 min-h-[44px] min-w-[64px] transition-colors',
                 isActive ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
                 disabled && 'opacity-50 cursor-not-allowed'
               )}
@@ -56,7 +56,7 @@ export function ToolBar({ onDeleteClip, canDelete = false }: ToolBarProps) {
               <button
                 type="button"
                 disabled
-                className="flex flex-col items-center gap-0.5 rounded-lg px-4 py-2 min-w-[64px] opacity-50 cursor-not-allowed"
+                className="flex flex-col items-center justify-center gap-0.5 rounded-lg px-4 py-2 min-h-[44px] min-w-[64px] opacity-50 cursor-not-allowed"
                 title="Split (coming soon)"
               >
                 <SplitSquareVertical className="h-5 w-5" />
@@ -76,7 +76,7 @@ export function ToolBar({ onDeleteClip, canDelete = false }: ToolBarProps) {
                 onClick={onDeleteClip}
                 disabled={!canDelete}
                 className={cn(
-                  'flex flex-col items-center gap-0.5 rounded-lg px-4 py-2 min-w-[64px] transition-colors hover:bg-destructive/20 hover:text-destructive',
+                  'flex flex-col items-center justify-center gap-0.5 rounded-lg px-4 py-2 min-h-[44px] min-w-[64px] transition-colors hover:bg-destructive/20 hover:text-destructive',
                   !canDelete && 'opacity-50 cursor-not-allowed'
                 )}
                 title="Delete clip"

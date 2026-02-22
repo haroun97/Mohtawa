@@ -1,15 +1,18 @@
 import { useEffect, useCallback, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { TopBar } from '@/components/builder/TopBar';
-import { NodeLibrary } from '@/components/builder/NodeLibrary';
+import { NodeLibrary, NodeLibraryContent } from '@/components/builder/NodeLibrary';
 import { FlowCanvas } from '@/components/builder/FlowCanvas';
 import { InspectorPanel } from '@/components/builder/InspectorPanel';
 import { CommandPalette } from '@/components/builder/CommandPalette';
 import { WorkflowMetaDialog } from '@/components/builder/WorkflowMetaDialog';
 import { EdlEditor } from '@/components/builder/EdlEditor';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 export default function Builder() {
   const { id } = useParams<{ id: string }>();
@@ -20,8 +23,9 @@ export default function Builder() {
   } = useWorkflowStore();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [libraryOpen, setLibraryOpen] = useState(true);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [edlEditorProjectId, setEdlEditorProjectId] = useState<string | null>(null);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (id) {
@@ -95,19 +99,28 @@ export default function Builder() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className="flex flex-1 overflow-hidden">
-        {libraryOpen && <NodeLibrary />}
+        {libraryOpen && !isMobile && <NodeLibrary />}
+        {isMobile && (
+          <Sheet open={libraryOpen} onOpenChange={setLibraryOpen}>
+            <SheetContent side="left" className="w-[280px] p-0 flex flex-col" hideCloseButton>
+              <NodeLibraryContent onClose={() => setLibraryOpen(false)} />
+            </SheetContent>
+          </Sheet>
+        )}
         <FlowCanvas />
         <InspectorPanel onOpenEdlEditor={setEdlEditorProjectId} />
       </div>
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
       <WorkflowMetaDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      {edlEditorProjectId != null && (
-        <EdlEditor
-          projectId={edlEditorProjectId}
-          onClose={() => setEdlEditorProjectId(null)}
-          onSaved={() => setEdlEditorProjectId(null)}
-        />
-      )}
+      {edlEditorProjectId != null &&
+        createPortal(
+          <EdlEditor
+            projectId={edlEditorProjectId}
+            onClose={() => setEdlEditorProjectId(null)}
+            onSaved={() => setEdlEditorProjectId(null)}
+          />,
+          document.body
+        )}
     </div>
   );
 }

@@ -47,9 +47,15 @@ export function CaptionsSheetContent({
   onEdlChange: (patch: Partial<EDL> | ((prev: EDL) => EDL)) => void;
 }) {
   const updateOverlay = (index: number, patch: Partial<EdlTextOverlay>) => {
-    const overlays = edl.overlays.map((o, i) =>
-      i === index ? { ...o, ...patch } : o
-    ) as EdlTextOverlay[];
+    const overlays = edl.overlays.map((o, i) => {
+      if (i !== index) return o;
+      const next = { ...o, ...patch } as EdlTextOverlay;
+      if (typeof next.startSec === 'number' && next.startSec < 0) next.startSec = 0;
+      if (typeof next.endSec === 'number' && typeof next.startSec === 'number' && next.endSec < next.startSec + 0.1) {
+        next.endSec = next.startSec + 0.1;
+      }
+      return next;
+    }) as EdlTextOverlay[];
     onEdlChange({ overlays });
   };
   const removeOverlay = (index: number) => {
@@ -108,7 +114,7 @@ export function CaptionsSheetContent({
                         min={0}
                         step={0.1}
                         value={overlay.startSec}
-                        onChange={(e) => updateOverlay(i, { startSec: Number(e.target.value) || 0 })}
+                        onChange={(e) => updateOverlay(i, { startSec: Math.max(0, Number(e.target.value) || 0) })}
                         className="text-sm"
                       />
                     </div>
@@ -119,7 +125,11 @@ export function CaptionsSheetContent({
                         min={overlay.startSec}
                         step={0.1}
                         value={overlay.endSec}
-                        onChange={(e) => updateOverlay(i, { endSec: Number(e.target.value) || overlay.startSec })}
+                        onChange={(e) =>
+                          updateOverlay(i, {
+                            endSec: Math.max(overlay.startSec + 0.1, Number(e.target.value) || overlay.startSec + 0.1),
+                          })
+                        }
                         className="text-sm"
                       />
                     </div>

@@ -1,4 +1,4 @@
-import { Toaster } from "@/components/ui/sonner";
+import { ResponsiveToaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
@@ -18,7 +18,7 @@ const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster richColors position="bottom-right" />
+        <ResponsiveToaster richColors />
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />

@@ -769,7 +769,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             }));
 
             if (result.status === 'RUNNING') {
-              pollTimer = setTimeout(pollExecution, 500);
+              pollTimer = setTimeout(pollExecution, 2000);
             } else {
               set({ executionPollingId: null });
             }
@@ -779,7 +779,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           }
         };
 
-        pollTimer = setTimeout(pollExecution, 300);
+        pollTimer = setTimeout(pollExecution, 500);
       } catch (err) {
         console.error('Execution failed:', err);
         set(state => ({

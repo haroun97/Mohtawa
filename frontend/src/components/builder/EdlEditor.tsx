@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, projectsApi, rendersApi, type EDL, type EdlTextOverlay } from '@/lib/api';
-import { parseS3Key } from '@/components/builder/editor/editorLib';
+import { parseS3Key, splitTimelineAtPlayhead } from '@/components/builder/editor/editorLib';
 import { EditorPage } from '@/components/builder/editor/EditorPage';
+import { EditorTopBar } from '@/components/builder/editor/EditorTopBar';
 import { ExportScreen } from '@/components/builder/editor/ExportScreen';
 import type {
   ExportOptions,
@@ -78,6 +79,8 @@ export function EdlEditor({
   /** When starting sync export, we store current draftVideoUrl so we only show "done" when the new render overwrites it. */
   const draftVideoUrlAtExportStartRef = useRef<string | null>(null);
   const setSaveStatus = edlEditorStore((s) => s.setSaveStatus);
+  /** Resolved playable URLs for timeline clips (S3 → presigned; HTTPS → as-is). Index matches edl.timeline. */
+  const [resolvedClipUrls, setResolvedClipUrls] = useState<(string | null)[]>([]);
 
   const loadEdl = useCallback(async () => {
     setLoading(true);
@@ -99,6 +102,49 @@ export function EdlEditor({
   useEffect(() => {
     loadEdl();
   }, [loadEdl]);
+
+  // Ensure body is interactive when editor is open (e.g. Radix Sheet can leave pointer-events: none on body;
+  // closing the Inspector before opening the editor helps, but this is a safeguard when editor is portaled from Builder).
+  useEffect(() => {
+    const prev = document.body.style.pointerEvents;
+    const id = setTimeout(() => {
+      document.body.style.pointerEvents = '';
+    }, 0);
+    return () => {
+      clearTimeout(id);
+      document.body.style.pointerEvents = prev;
+    };
+  }, []);
+
+  // Resolve timeline clip URLs (S3 → presigned) so timeline thumbnails can load.
+  useEffect(() => {
+    if (!edl?.timeline?.length) {
+      setResolvedClipUrls([]);
+      return;
+    }
+    let cancelled = false;
+    const resolveOne = async (clipUrl: string): Promise<string | null> => {
+      if (clipUrl.startsWith('http://') || clipUrl.startsWith('https://')) return clipUrl;
+      const key = parseS3Key(clipUrl);
+      if (!key) return null;
+      try {
+        const res = await api.get<{ url: string }>(`/storage/play?key=${encodeURIComponent(key)}`);
+        return res.url;
+      } catch {
+        return null;
+      }
+    };
+    Promise.all(edl.timeline.map((c) => resolveOne(c.clipUrl)))
+      .then((urls) => {
+        if (!cancelled) setResolvedClipUrls(urls);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedClipUrls(edl.timeline.map(() => null));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [edl?.timeline]);
 
   // Simulated progress for sync (in-process) render until backend reports real progress. 0–1 scale.
   useEffect(() => {
@@ -217,6 +263,45 @@ export function EdlEditor({
     };
   }, [initialDraftVideoUrl]);
 
+  // When opened without initialDraftVideoUrl (e.g. from Builder "Edit draft"), fetch project and set playUrl from draftVideoUrl.
+  useEffect(() => {
+    if (initialDraftVideoUrl != null) return;
+    if (!projectId) return;
+    let cancelled = false;
+    projectsApi
+      .get(projectId)
+      .then((project) => {
+        const draftUrl = project.draftVideoUrl ?? null;
+        if (cancelled || !draftUrl) {
+          if (!cancelled) setPlayUrl(null);
+          return;
+        }
+        if (draftUrl.startsWith('http://') || draftUrl.startsWith('https://')) {
+          setPlayUrl(draftUrl);
+          return;
+        }
+        const key = parseS3Key(draftUrl);
+        if (!key) {
+          setPlayUrl(null);
+          return;
+        }
+        return api
+          .get<{ url: string }>(`/storage/play?key=${encodeURIComponent(key)}`)
+          .then((res) => {
+            if (!cancelled) setPlayUrl(res.url);
+          })
+          .catch(() => {
+            if (!cancelled) setPlayUrl(null);
+          });
+      })
+      .catch(() => {
+        if (!cancelled) setPlayUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, initialDraftVideoUrl]);
+
   const HISTORY_MAX = 50;
   const [past, setPast] = useState<EDL[]>([]);
   const [future, setFuture] = useState<EDL[]>([]);
@@ -317,7 +402,9 @@ export function EdlEditor({
       if (!edl || index < 0 || index >= edl.timeline.length) return;
       const clip = edl.timeline[index];
       const duration = Math.max(0.04, clip.outSec - clip.inSec);
-      const inSec = Math.max(0, newInSec);
+      const sourceDurationSec = clip.sourceDurationSec ?? clip.outSec + 300;
+      const maxInSec = Math.max(0, sourceDurationSec - duration);
+      const inSec = Math.max(0, Math.min(maxInSec, newInSec));
       const outSec = inSec + duration;
       const timeline = edl.timeline.map((c, i) =>
         i !== index ? c : { ...c, inSec, outSec }
@@ -370,6 +457,20 @@ export function EdlEditor({
     [edl, updateEdl]
   );
 
+  const deleteOverlay = useCallback(
+    (overlayIndex: number) => {
+      if (!edl || overlayIndex < 0 || overlayIndex >= edl.overlays.length) return;
+      const removedId = (edl.overlays[overlayIndex] as EdlTextOverlay).id ?? `overlay-${overlayIndex}`;
+      const overlays = edl.overlays.filter((_, i) => i !== overlayIndex) as EdlTextOverlay[];
+      updateEdl({ overlays });
+      const current = edlEditorStore.getState().selectedBlock;
+      if (current?.type === 'text' && current.id === removedId) {
+        edlEditorStore.getState().setSelectedBlock(null);
+      }
+    },
+    [edl, updateEdl]
+  );
+
   const duplicateClip = useCallback(
     (index: number) => {
       if (!edl || index < 0 || index >= edl.timeline.length) return;
@@ -395,36 +496,12 @@ export function EdlEditor({
 
   const splitClipAtPlayhead = useCallback(
     (clipIndex: number, playheadSec: number) => {
-      if (!edl || clipIndex < 0 || clipIndex >= edl.timeline.length) return;
-      const clip = edl.timeline[clipIndex];
-      const segStart = clip.startSec;
-      const segEnd = segStart + Math.max(0.04, clip.outSec - clip.inSec);
-      if (playheadSec <= segStart || playheadSec >= segEnd) return;
-      const duration = clip.outSec - clip.inSec;
-      const t = (playheadSec - segStart) / (segEnd - segStart);
-      const splitInOut = clip.inSec + t * duration;
-      const first: EdlTimelineClip = {
-        ...clip,
-        id: clip.id ?? `clip-${clipIndex}`,
-        outSec: splitInOut,
-      };
-      const second: EdlTimelineClip = {
-        ...clip,
-        id: `clip-${Date.now()}-split`,
-        inSec: splitInOut,
-        outSec: clip.outSec,
-      };
-      const timeline = [...edl.timeline];
-      timeline.splice(clipIndex, 1, first, second);
-      let startSec = 0;
-      const withStart = timeline.map((c) => {
-        const dur = Math.max(0.04, c.outSec - c.inSec);
-        const out = { ...c, startSec, outSec: c.inSec + dur };
-        startSec += dur;
-        return out;
-      });
+      if (!edl) return;
+      const withStart = splitTimelineAtPlayhead(edl.timeline, clipIndex, playheadSec);
+      if (!withStart) return;
+      const second = withStart[clipIndex + 1];
       updateEdl({ timeline: withStart });
-      edlEditorStore.getState().setSelectedBlock({ type: 'video', id: second.id! });
+      if (second) edlEditorStore.getState().setSelectedBlock({ type: 'video', id: second.id! });
     },
     [edl, updateEdl]
   );
@@ -553,7 +630,17 @@ export function EdlEditor({
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const target = e.target as Node;
         if (target && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
-        const selectedClipId = getSelectedClipId(edlEditorStore.getState());
+        const state = edlEditorStore.getState();
+        const selectedBlock = state.selectedBlock;
+        if (selectedBlock?.type === 'text' && edl) {
+          const overlayIndex = edl.overlays.findIndex((o, i) => (o.id ?? `overlay-${i}`) === selectedBlock.id);
+          if (overlayIndex >= 0) {
+            e.preventDefault();
+            deleteOverlay(overlayIndex);
+          }
+          return;
+        }
+        const selectedClipId = getSelectedClipId(state);
         if (selectedClipId == null || !edl || edl.timeline.length <= 1) return;
         const index = edl.timeline.findIndex((c) => (c.id ?? '') === selectedClipId);
         if (index >= 0) {
@@ -564,7 +651,7 @@ export function EdlEditor({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [edl, saving, handleSaveAndRerender, deleteClip]);
+  }, [edl, saving, handleSaveAndRerender, deleteClip, deleteOverlay]);
 
   useEffect(() => {
     return () => {
@@ -576,15 +663,30 @@ export function EdlEditor({
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="fixed inset-0 z-[200] flex flex-col bg-background min-h-[100dvh]">
+        <EditorTopBar
+          projectName={undefined}
+          resolution="1080p"
+          onClose={onClose}
+          onExport={() => {}}
+          exportDisabled
+          exporting={false}
+          exportProgress={0}
+          error={null}
+          canUndo={false}
+          canRedo={false}
+        />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <p className="text-sm">Loading timeline…</p>
+        </div>
       </div>
     );
   }
 
   if (error && !edl) {
     return (
-      <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-4 bg-background p-4">
+      <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-4 bg-background min-h-[100dvh] p-4">
         <p className="text-sm text-destructive">{error}</p>
         <Button variant="outline" onClick={onClose}>
           Close
@@ -615,6 +717,7 @@ export function EdlEditor({
       projectName={undefined}
       edl={edl}
       playUrl={playUrl}
+      resolvedClipUrls={resolvedClipUrls}
       onEdlChange={updateEdl}
       onClose={onClose}
       onExport={handleSaveAndRerender}
@@ -632,6 +735,7 @@ export function EdlEditor({
       setClipSlipInAbsolute={setClipSlipInAbsolute}
       setOverlayTrim={setOverlayTrim}
       onDeleteClip={deleteClip}
+      onDeleteOverlay={deleteOverlay}
       onDuplicateClip={duplicateClip}
       onSplitClipAtPlayhead={splitClipAtPlayhead}
       videoRef={videoRef}

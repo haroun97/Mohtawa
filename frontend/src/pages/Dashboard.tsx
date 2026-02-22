@@ -105,18 +105,18 @@ export default function Dashboard() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 min-h-[48px] md:min-h-0 md:h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Workflow className="h-6 w-6 text-primary" />
             <h1 className="text-lg font-semibold tracking-tight">Mohtawa</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={toggle} className="rounded-full" aria-label="Toggle theme">
+            <Button variant="ghost" size="icon" onClick={toggle} className="rounded-full min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8" aria-label="Toggle theme">
               {isDark() ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2">
+                <Button variant="ghost" size="sm" className="gap-2 min-h-[44px] md:min-h-8">
                   <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
                     <User className="h-3.5 w-3.5 text-primary" />
                   </div>
@@ -144,14 +144,14 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
         {/* Top section */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div>
             <h2 className="text-2xl font-bold tracking-tight">Workflows</h2>
             <p className="text-muted-foreground text-sm mt-1">Automate your AI content creation pipeline</p>
           </div>
-          <Button onClick={handleNew} className="gap-2" disabled={creating}>
+          <Button onClick={handleNew} className="gap-2 min-h-[44px] md:min-h-9" disabled={creating}>
             {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             New Workflow
           </Button>
@@ -175,7 +175,7 @@ export default function Dashboard() {
                 variant={filter === f ? 'secondary' : 'ghost'}
                 size="sm"
                 onClick={() => setFilter(f)}
-                className="capitalize"
+                className="capitalize min-h-[44px] md:min-h-8"
               >
                 {f}
               </Button>
@@ -241,7 +241,7 @@ export default function Dashboard() {
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          <Button variant="ghost" size="icon" className="h-7 min-h-[44px] min-w-[44px] md:h-7 md:min-h-0 md:min-w-0 w-7 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0" aria-label="Workflow options">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>

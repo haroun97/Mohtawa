@@ -1,10 +1,11 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   DndContext,
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -31,6 +32,8 @@ interface TimelineTracksProps {
   edl: EDL;
   playheadSec: number;
   videoDuration: number;
+  /** Resolved playable URLs for timeline clips (index matches edl.timeline). Enables thumbnails for S3 clips. */
+  resolvedClipUrls?: (string | null)[];
   onReorder: (fromIndex: number, toIndex: number) => void;
   onSelectClip: (index: number) => void;
   setClipTrim: (index: number, field: 'inSec' | 'outSec', value: number) => void;
@@ -42,21 +45,26 @@ interface TimelineTracksProps {
   setDraggingIndex: (i: number | null) => void;
 }
 
-function SortableVideoClip({
-  clip,
-  index,
-  totalDuration,
-  isSelected,
-  onSelect,
-  setClipTrim,
-}: {
+interface SortableVideoClipProps {
   clip: EdlTimelineClip;
   index: number;
   totalDuration: number;
   isSelected: boolean;
   onSelect: () => void;
   setClipTrim: (index: number, field: 'inSec' | 'outSec', value: number) => void;
-}) {
+  /** Resolved playable URL for this clip (presigned if S3). Falls back to clip.clipUrl if not provided. */
+  playableUrl: string | null;
+}
+
+const SortableVideoClip = React.forwardRef<HTMLDivElement, SortableVideoClipProps>(function SortableVideoClip({
+  clip,
+  index,
+  totalDuration,
+  isSelected,
+  onSelect,
+  setClipTrim,
+  playableUrl,
+}, ref) {
   const {
     attributes,
     listeners,
@@ -65,6 +73,14 @@ function SortableVideoClip({
     transition,
     isDragging,
   } = useSortable({ id: `clip-${clip.id ?? index}` });
+  const mergedRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node);
+      if (typeof ref === 'function') ref(node);
+      else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    },
+    [setNodeRef, ref]
+  );
   const duration = Math.max(0.04, clip.outSec - clip.inSec);
   const widthPx = totalDuration > 0 ? duration * PIXELS_PER_SECOND - 2 : 48;
   const style = transform
@@ -92,19 +108,17 @@ function SortableVideoClip({
 
   return (
     <motion.div
-      ref={setNodeRef}
+      ref={mergedRef}
       layout
       data-track-clip
       style={{ ...style, width: Math.max(40, widthPx), height: TRACK_HEIGHT - 8 }}
       className={`
         flex shrink-0 items-stretch rounded-md border-2 transition-colors relative overflow-hidden
-        min-w-[40px] cursor-grab active:cursor-grabbing
+        min-w-[40px] touch-pan-x
         ${isSelected ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'border-border bg-card hover:bg-card/90'}
         ${isDragging ? 'opacity-60 z-50' : ''}
       `}
       onClick={() => onSelect()}
-      {...attributes}
-      {...listeners}
     >
       {isSelected && (
         <>
@@ -130,24 +144,30 @@ function SortableVideoClip({
       )}
       <div className="flex-1 min-w-0 flex items-center pl-6 pr-6 pointer-events-none">
         <VideoThumbnailStrip
-          clipUrl={clip.clipUrl}
+          clipUrl={playableUrl ?? clip.clipUrl}
           inSec={clip.inSec}
           outSec={clip.outSec}
           widthPx={widthPx}
           heightPx={TRACK_HEIGHT - 8}
         />
       </div>
-      <div className="absolute left-1 top-1/2 -translate-y-1/2 pointer-events-none">
-        <GripVertical className="h-3 w-3 text-muted-foreground" />
+      <div
+        className="absolute left-1 top-1/2 -translate-y-1/2 flex items-center justify-center cursor-grab active:cursor-grabbing touch-none w-6 h-full min-h-[24px] -ml-1 z-[1]"
+        title="Drag to reorder"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-3 w-3 text-muted-foreground pointer-events-none" />
       </div>
     </motion.div>
   );
-}
+});
 
 export function TimelineTracks({
   edl,
   playheadSec,
   videoDuration,
+  resolvedClipUrls = [],
   onReorder,
   onSelectClip,
   setClipTrim,
@@ -163,7 +183,6 @@ export function TimelineTracks({
   const selectedBlock = edlEditorStore((s) => s.selectedBlock);
   const setSelectedBlock = edlEditorStore((s) => s.setSelectedBlock);
   const setActiveTool = edlEditorStore((s) => s.setActiveTool);
-  const slipMode = edlEditorStore((s) => s.slipMode);
 
   const totalDuration = edl.timeline.reduce(
     (acc, c) => acc + Math.max(0.04, c.outSec - c.inSec),
@@ -173,6 +192,9 @@ export function TimelineTracks({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 5 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
@@ -229,11 +251,11 @@ export function TimelineTracks({
   }
 
   return (
-    <div className="flex flex-col gap-0 rounded-lg border border-border bg-muted/20 overflow-hidden">
-      <div className="relative flex-1 min-h-0">
+    <div className="flex flex-col gap-0 rounded-lg border border-border bg-muted/20 overflow-hidden min-w-0">
+      <div className="relative flex-1 min-h-0 min-w-0">
         <div
           ref={scrollRef}
-          className="overflow-x-auto overflow-y-hidden"
+          className="overflow-x-auto overflow-y-hidden touch-pan-x min-w-0 [-webkit-overflow-scrolling:touch]"
           style={{ height: RULER_HEIGHT + 4 * TRACK_HEIGHT + 24 }}
           onClick={handleTrackContentClick}
           onScroll={() => setScrollLeft(scrollRef.current?.scrollLeft ?? 0)}
@@ -284,7 +306,21 @@ export function TimelineTracks({
                 <div className="w-16 flex-shrink-0 pl-1 text-[10px] font-medium text-muted-foreground">Text</div>
                 <div className="flex-1 relative py-1 pr-2" style={{ minHeight: TRACK_HEIGHT - 8 }}>
                   {edl.overlays.length === 0 ? (
-                    <span className="text-[10px] text-muted-foreground/70 italic">No captions</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedBlock({ type: 'text', id: '' });
+                        setActiveTool('captions');
+                      }}
+                      className={`rounded-md border-2 flex items-center justify-center gap-1.5 px-2 min-w-[100px] cursor-pointer transition-colors text-[10px]
+                        ${selectedBlock?.type === 'text' ? 'border-primary bg-primary/15 ring-1 ring-primary/40' : 'border-sky-500/50 bg-sky-500/10 hover:bg-sky-500/20'}
+                      `}
+                      style={{ width: Math.max(120, totalDuration * PIXELS_PER_SECOND - 8) }}
+                      title="Add text overlays / captions"
+                    >
+                      <Type className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                      <span className="text-muted-foreground/90">Add captions</span>
+                    </button>
                   ) : (
                     edl.overlays.map((o, i) => {
                       const overlay = o as EdlTextOverlay;
@@ -407,6 +443,7 @@ export function TimelineTracks({
                                   onSelectClip(i);
                                 }}
                                 setClipTrim={setClipTrim}
+                                playableUrl={resolvedClipUrls[i] ?? null}
                               />
                             );
                           })}
@@ -437,11 +474,6 @@ export function TimelineTracks({
           />
         )}
       </div>
-      {slipMode && (
-        <div className="flex items-center justify-center gap-2 py-1.5 px-2 bg-amber-500/15 border-t border-amber-500/30 text-xs text-amber-800 dark:text-amber-200">
-          Slip mode: drag to shift source window. Use &quot;Done&quot; in the action bar to exit.
-        </div>
-      )}
     </div>
   );
 }

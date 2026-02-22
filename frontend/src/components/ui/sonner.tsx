@@ -1,5 +1,6 @@
 import { Toaster as Sonner, toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
@@ -23,5 +24,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
     />
   );
 };
+
+/** Toaster with position responsive to viewport: bottom-center on mobile, bottom-right on desktop. */
+export function ResponsiveToaster(props: Omit<ToasterProps, "position">) {
+  const isMobile = useIsMobile();
+  return <Toaster {...props} position={isMobile ? "bottom-center" : "bottom-right"} />;
+}
 
 export { Toaster, toast };

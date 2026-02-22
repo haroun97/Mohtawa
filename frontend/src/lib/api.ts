@@ -132,6 +132,8 @@ export interface EdlTimelineClip {
   inSec: number;
   outSec: number;
   startSec: number;
+  /** Optional source duration for slip clamp (defaults to outSec + 300). */
+  sourceDurationSec?: number;
 }
 
 export interface EdlTextOverlay {

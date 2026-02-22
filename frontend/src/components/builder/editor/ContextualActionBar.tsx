@@ -35,6 +35,8 @@ interface ContextualActionBarProps {
   onEdit?: () => void;
   onDeleteClip?: () => void;
   canDeleteClip?: boolean;
+  onDeleteOverlay?: () => void;
+  canDeleteOverlay?: boolean;
   onDuplicateClip?: () => void;
   onSplitClipAtPlayhead?: () => void;
   canSplitAtPlayhead?: boolean;
@@ -46,6 +48,8 @@ export function ContextualActionBar({
   onEdit,
   onDeleteClip,
   canDeleteClip = false,
+  onDeleteOverlay,
+  canDeleteOverlay = false,
   onDuplicateClip,
   onSplitClipAtPlayhead,
   canSplitAtPlayhead = false,
@@ -105,11 +109,20 @@ export function ContextualActionBar({
       ];
     }
     // Text / Audio / Adjust
+    const isText = selectedBlock.type === 'text';
     return [
       { id: 'split', label: 'Split', icon: <Scissors className="h-4 w-4" />, disabled: true, title: 'Split (coming soon)' },
       { id: 'edit', label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: handleEdit },
       { id: 'copy', label: 'Copy', icon: <Copy className="h-4 w-4" />, disabled: true, title: 'Copy (coming soon)' },
-      { id: 'delete', label: 'Delete', icon: <Trash2 className="h-4 w-4" />, onClick: onDeleteClip, disabled: !canDeleteClip, destructive: true },
+      {
+        id: 'delete',
+        label: 'Delete',
+        icon: <Trash2 className="h-4 w-4" />,
+        onClick: isText ? onDeleteOverlay : onDeleteClip,
+        disabled: isText ? !canDeleteOverlay : !canDeleteClip,
+        destructive: true,
+        title: isText ? 'Delete overlay' : 'Delete clip',
+      },
       { id: 'duplicate', label: 'Duplicate', icon: <CopyPlus className="h-4 w-4" />, disabled: true, title: 'Duplicate (coming soon)' },
     ];
   };
@@ -136,11 +149,12 @@ export function ContextualActionBar({
                       onClick={onClick}
                       disabled={disabled}
                       className={cn(
-                        'flex items-center gap-2 rounded-lg px-3 py-2 min-w-[80px] transition-colors text-sm',
+                        'flex items-center gap-2 rounded-lg px-3 py-2 min-w-[80px] min-h-[44px] transition-colors text-sm touch-manipulation',
                         disabled && 'opacity-50 cursor-not-allowed',
                         !disabled && destructive && 'hover:bg-destructive/15 hover:text-destructive',
                         !disabled && !destructive && 'hover:bg-muted'
                       )}
+                      aria-label={title ?? label}
                     >
                       {icon}
                       <span className="font-medium whitespace-nowrap">{label}</span>
