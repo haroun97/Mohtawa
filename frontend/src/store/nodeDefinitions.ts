@@ -255,7 +255,69 @@ export const nodeDefinitions: NodeDefinition[] = [
     ],
   },
 
+  // ─── IDEAS (Phase 7b) ──────────────────────────────
+  {
+    type: 'ideas.source',
+    category: 'ideas',
+    title: 'Ideas Source',
+    description: 'Load ideas from Manual list, CSV, Notion, or Google Docs. Output: items array for For Each.',
+    icon: 'List',
+    inputs: [],
+    outputs: ['items'],
+    fields: [
+      { name: 'provider', label: 'Provider', type: 'select', options: ['manual', 'csv', 'in_app_editor', 'notion', 'google_docs'], defaultValue: 'manual', help: 'In-app Editor: use doc from Ideas & Scripts page' },
+      { name: 'manualItems', label: 'Ideas (one per line or JSON array)', type: 'textarea', placeholder: 'Idea one\nIdea two\nOr paste JSON: [{"id":"1","title":"Title","idea":"..."}]', help: 'Manual mode: one idea per line (title = line) or valid JSON array of {id, title, idea}' },
+      { name: 'csvColumn', label: 'CSV column for idea text', type: 'text', placeholder: 'idea', help: 'CSV mode: column name containing the idea text' },
+      { name: 'inAppEditorDocMode', label: 'Document mode', type: 'select', options: ['single', 'multi'], defaultValue: 'single', help: 'single: use one document; multi: one item per selected document' },
+      { name: 'inAppEditorSplitMode', label: 'Split by', type: 'select', options: ['headings', 'divider'], defaultValue: 'headings', help: 'In-app Editor: split by H2 headings or by divider (---). Used for both single- and multi-doc modes.' },
+      { name: 'ideaDocId', label: 'Document', type: 'text', placeholder: 'Select a document (saved in Ideas & Scripts)', help: 'In-app Editor: document id from Ideas & Scripts. Use dropdown in inspector when available.' },
+      { name: 'ideaDocIds', label: 'Documents (multi)', type: 'text', placeholder: 'Select one or more documents', help: 'In-app Editor multi-doc: selected documents from Ideas & Scripts.' },
+    ],
+  },
+
+  // ─── TEXT (Phase 7b) ───────────────────────────────
+  {
+    type: 'text.split_items',
+    category: 'text',
+    title: 'Split into Items',
+    description: 'Split raw text into items by headings, bullets, or separator',
+    icon: 'Split',
+    inputs: ['input'],
+    outputs: ['items'],
+    fields: [
+      { name: 'splitMode', label: 'Split by', type: 'select', options: ['headings', 'bullets', 'separator'], defaultValue: 'headings', help: 'headings: # or Markdown headings; bullets: - or •; separator: ---' },
+      { name: 'separator', label: 'Custom separator (separator mode)', type: 'text', placeholder: '---', help: 'Only when split by separator' },
+    ],
+  },
+
+  // ─── SCRIPT (Phase 7b) ─────────────────────────────
+  {
+    type: 'script.write',
+    category: 'script',
+    title: 'Write Script',
+    description: 'Shape or edit script for voiceover. When inside For Each, uses current item. Output: title, idea, script for Voice node.',
+    icon: 'FileText',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [
+      { name: 'mode', label: 'Mode', type: 'select', options: ['pass_through', 'manual'], defaultValue: 'pass_through', help: 'pass_through: use script from current item or upstream; manual: use Script override below' },
+      { name: 'scriptOverride', label: 'Script (override)', type: 'textarea', placeholder: 'Leave empty to use idea/script from upstream or current item', help: 'Manual mode: this text is used as the script for TTS' },
+    ],
+  },
+
   // ─── LOGIC ─────────────────────────────────────────
+  {
+    type: 'flow.for_each',
+    category: 'logic',
+    title: 'For Each',
+    description: 'Run downstream nodes once per item. Provides $item, $index, $total per iteration.',
+    icon: 'Repeat',
+    inputs: ['items'],
+    outputs: ['output'],
+    fields: [
+      { name: 'mode', label: 'Execution', type: 'select', options: ['sequential', 'parallel'], defaultValue: 'sequential', help: 'Parallel coming soon' },
+    ],
+  },
   {
     type: 'if-else',
     category: 'logic',
@@ -375,6 +437,16 @@ export const nodeDefinitions: NodeDefinition[] = [
     outputs: ['output'],
     fields: [],
   },
+  {
+    type: 'preview.loop_outputs',
+    category: 'utility',
+    title: 'Preview Loop Outputs',
+    description: 'View a playlist of all audio outputs from a For Each loop (one clip per item). Connect after flow.for_each.',
+    icon: 'ListMusic',
+    inputs: ['input'],
+    outputs: ['output'],
+    fields: [],
+  },
 ];
 
 export const categoryLabels: Record<string, string> = {
@@ -386,6 +458,9 @@ export const categoryLabels: Record<string, string> = {
   logic: 'Logic',
   utility: 'Utilities',
   review: 'Review',
+  ideas: 'Ideas',
+  text: 'Text',
+  script: 'Script',
 };
 
-export const categoryOrder = ['trigger', 'ai', 'voice', 'video', 'review', 'social', 'logic', 'utility'];
+export const categoryOrder = ['trigger', 'ideas', 'text', 'script', 'ai', 'voice', 'video', 'review', 'social', 'logic', 'utility'];

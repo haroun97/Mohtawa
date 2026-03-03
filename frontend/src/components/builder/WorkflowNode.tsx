@@ -20,6 +20,9 @@ const categoryAccentMap: Record<NodeCategory, string> = {
   logic: 'border-l-logic shadow-logic/5',
   utility: 'border-l-utility shadow-utility/5',
   review: 'border-l-amber-500 shadow-amber-500/5',
+  ideas: 'border-l-ideas shadow-ideas/5',
+  text: 'border-l-text shadow-text/5',
+  script: 'border-l-script shadow-script/5',
 };
 
 const categoryBgMap: Record<NodeCategory, string> = {
@@ -31,6 +34,8 @@ const categoryBgMap: Record<NodeCategory, string> = {
   logic: 'bg-logic/8',
   utility: 'bg-utility/8',
   review: 'bg-amber-500/8',
+  ideas: 'bg-ideas/8',
+  text: 'bg-text/8',
 };
 
 const categoryTextMap: Record<NodeCategory, string> = {
@@ -42,6 +47,9 @@ const categoryTextMap: Record<NodeCategory, string> = {
   logic: 'text-logic',
   utility: 'text-utility',
   review: 'text-amber-600',
+  ideas: 'text-ideas',
+  text: 'text-text',
+  script: 'text-script',
 };
 
 const statusDotMap: Record<string, string> = {

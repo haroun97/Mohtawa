@@ -7,6 +7,10 @@ import { executeConditional } from "./conditional";
 import { executeVideoAutoEdit } from "./videoAutoEdit";
 import { executeReviewApprovalGate } from "./reviewApprovalGate";
 import { executeVideoRenderFinal } from "./videoRenderFinal";
+import { executeIdeasSource } from "./ideasSource.js";
+import { executeSplitItems } from "./splitItems.js";
+import { executeForEach } from "./forEach.js";
+import { executeWriteScript } from "./writeScript.js";
 import type { VoiceProfileRecord } from "../voice/types.js";
 
 export interface ExecutorContext {
@@ -80,9 +84,22 @@ export async function executeNode(
           },
         };
 
+      case "ideas":
+        if (nodeType === "ideas.source") return executeIdeasSource(ctx);
+        return { output: { items: [] } };
+
+      case "text":
+        if (nodeType === "text.split_items") return executeSplitItems(ctx);
+        return { output: { items: [] } };
+
+      case "script":
+        if (nodeType === "script.write") return executeWriteScript(ctx);
+        return { output: { title: "", idea: "", script: "" } };
+
       case "logic":
         if (nodeType === "if-else") return executeConditional(config, inputData);
         if (nodeType === "delay") return await executeDelay(config);
+        if (nodeType === "flow.for_each") return executeForEach(ctx);
         if (nodeType === "loop") return { output: { iterations: 1, completed: true, items: inputData } };
         if (nodeType === "merge") return { output: { merged: true, ...inputData } };
         return { output: { result: "logic processed" } };
@@ -112,6 +129,12 @@ export async function executeNode(
         if (nodeType === "preview-output") {
           // Pass-through: forward upstream output so the UI can show/play it (e.g. audio).
           return { output: inputData };
+        }
+        if (nodeType === "preview.loop_outputs") {
+          const { executePreviewLoopOutputs } = await import(
+            "./previewLoopOutputs.js"
+          );
+          return executePreviewLoopOutputs(ctx);
         }
         return { output: { result: inputData } };
 

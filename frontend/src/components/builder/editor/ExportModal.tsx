@@ -1,7 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 
@@ -31,22 +30,22 @@ function SegmentedControl<T extends string | number>({
   label: string;
 }) {
   return (
-    <div className="space-y-2">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex rounded-lg bg-muted/60 p-0.5 border border-border/50">
+    <div>
+      <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2 block">
+        {label}
+      </label>
+      <div className="ios-segmented flex">
         {options.map((opt) => (
           <button
             key={String(opt)}
             type="button"
             onClick={() => onChange(opt)}
             className={cn(
-              'flex-1 py-2 text-sm font-medium rounded-md transition-colors',
-              value === opt
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+              'flex-1 px-3 py-2 text-xs font-semibold transition-all duration-200',
+              value === opt ? 'ios-segmented-active' : 'text-muted-foreground'
             )}
           >
-            {opt}
+            {String(opt)}
           </button>
         ))}
       </div>
@@ -107,75 +106,68 @@ export function ExportModal({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
-          className="fixed inset-0 z-[250] bg-black/50 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          className="fixed inset-0 z-[250] bg-editor-bg/80 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
         />
         <DialogPrimitive.Content
           aria-describedby={undefined}
           className={cn(
-            'fixed left-[50%] top-[50%] z-[250] w-full max-w-sm translate-x-[-50%] translate-y-[-50%]',
-            'rounded-2xl border bg-background/95 p-6 shadow-xl',
+            'fixed left-[50%] top-[50%] z-[250] w-[85%] max-w-[340px] translate-x-[-50%] translate-y-[-50%]',
+            'bg-editor-surface rounded-3xl p-5 shadow-2xl',
             'duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out',
             'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95'
           )}
         >
-          <DialogPrimitive.Title className="text-lg font-semibold">
-            {exporting ? 'Exporting…' : 'Export'}
-          </DialogPrimitive.Title>
+          <div className="flex items-center justify-between mb-5">
+            <DialogPrimitive.Title className="text-base font-semibold text-foreground">
+              {exporting ? 'Exporting…' : 'Export Settings'}
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Close
+              className="w-7 h-7 flex items-center justify-center rounded-full bg-editor-bg editor-glass-hover disabled:pointer-events-none"
+              disabled={exporting}
+            >
+              <X size={14} className="text-muted-foreground" />
+              <span className="sr-only">Close</span>
+            </DialogPrimitive.Close>
+          </div>
           {exporting ? (
-            <div className="mt-5 space-y-4">
+            <div className="space-y-4">
               <Progress value={exportProgress} className="h-3" />
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">
-                  {Math.round(exportProgress)}%
-                </span>
-                <span className="text-muted-foreground">
-                  About {timeRemainingSec} s remaining
-                </span>
+              <div className="flex justify-between text-sm text-muted-foreground">
+                <span>{Math.round(exportProgress)}%</span>
+                <span>About {timeRemainingSec} s remaining</span>
               </div>
             </div>
           ) : (
             <>
-              <div className="mt-5 space-y-5">
-                <SegmentedControl
+              <div className="space-y-4">
+                <SegmentedControl<ExportResolution>
                   label="Resolution"
                   value={resolution}
                   options={RESOLUTIONS}
                   onChange={setResolution}
                 />
-                <SegmentedControl
+                <SegmentedControl<ExportFps>
                   label="Frame rate"
                   value={fps}
                   options={FPS_OPTIONS}
                   onChange={setFps}
                 />
-                <SegmentedControl
-                  label="Color"
+                <SegmentedControl<ExportColor>
+                  label="Colour"
                   value={color}
                   options={COLOR_OPTIONS}
                   onChange={setColor}
                 />
               </div>
-              <div className="mt-6 flex gap-2 justify-end">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onOpenChange(false)}
-                >
-                  Cancel
-                </Button>
-                <Button size="sm" onClick={handleConfirm}>
-                  Export
-                </Button>
-              </div>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                className="w-full mt-5 py-3 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
+              >
+                Export Video
+              </button>
             </>
           )}
-          <DialogPrimitive.Close
-            className="absolute right-4 top-4 rounded-sm p-1 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring disabled:pointer-events-none"
-            disabled={exporting}
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

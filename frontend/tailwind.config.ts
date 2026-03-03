@@ -65,6 +65,9 @@ export default {
         social: "hsl(var(--social-color))",
         logic: "hsl(var(--logic-color))",
         utility: "hsl(var(--utility-color))",
+        ideas: "hsl(var(--ideas-color))",
+        text: "hsl(var(--text-color))",
+        script: "hsl(var(--script-color))",
         canvas: {
           bg: "hsl(var(--canvas-bg))",
           grid: "hsl(var(--canvas-grid))",
@@ -74,6 +77,25 @@ export default {
           border: "hsl(var(--node-border))",
           selected: "hsl(var(--node-selected))",
         },
+        editor: {
+          bg: "hsl(var(--editor-bg))",
+          "bg-immersive": "hsl(var(--editor-bg-immersive))",
+          surface: "hsl(var(--editor-surface))",
+          "surface-hover": "hsl(var(--editor-surface-hover))",
+          preview: "hsl(var(--editor-preview-bg))",
+          timeline: "hsl(var(--editor-timeline-bg))",
+          toolbar: "hsl(var(--editor-toolbar-bg))",
+        },
+        selection: {
+          DEFAULT: "hsl(var(--selection))",
+          foreground: "hsl(var(--selection-foreground))",
+        },
+        "text-layer": {
+          DEFAULT: "hsl(var(--text-layer))",
+          foreground: "hsl(var(--text-layer-foreground))",
+        },
+        "audio-waveform": "hsl(var(--audio-waveform))",
+        playhead: "hsl(var(--playhead))",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -97,6 +119,10 @@ export default {
           "0%": { opacity: "0", transform: "scale(0.95)" },
           "100%": { opacity: "1", transform: "scale(1)" },
         },
+        "slide-up": {
+          "0%": { opacity: "0", transform: "translateY(100%)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
         "slide-in-right": {
           "0%": { transform: "translateX(100%)", opacity: "0" },
           "100%": { transform: "translateX(0)", opacity: "1" },
@@ -115,11 +141,12 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
         "scale-in": "scale-in 0.2s ease-out",
+        "slide-up": "slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         "slide-in-right": "slide-in-right 0.3s ease-out",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         shimmer: "shimmer 2s linear infinite",
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [require("tailwindcss-animate"), require("@tailwindcss/typography")],
 } satisfies Config;

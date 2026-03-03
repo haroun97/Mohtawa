@@ -81,6 +81,8 @@ export function EdlEditor({
   const setSaveStatus = edlEditorStore((s) => s.setSaveStatus);
   /** Resolved playable URLs for timeline clips (S3 → presigned; HTTPS → as-is). Index matches edl.timeline. */
   const [resolvedClipUrls, setResolvedClipUrls] = useState<(string | null)[]>([]);
+  /** Resolved playable URL for voiceover (S3 → presigned; HTTPS → as-is). Used for waveform. */
+  const [resolvedAudioUrl, setResolvedAudioUrl] = useState<string | null>(null);
 
   const loadEdl = useCallback(async () => {
     setLoading(true);
@@ -145,6 +147,36 @@ export function EdlEditor({
       cancelled = true;
     };
   }, [edl?.timeline]);
+
+  // Resolve voiceover URL (S3 → presigned) so waveform can fetch audio for peaks.
+  useEffect(() => {
+    const raw = edl?.audio?.voiceoverUrl;
+    if (!raw?.trim()) {
+      setResolvedAudioUrl(null);
+      return;
+    }
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      setResolvedAudioUrl(raw);
+      return;
+    }
+    const key = parseS3Key(raw);
+    if (!key) {
+      setResolvedAudioUrl(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get<{ url: string }>(`/storage/play?key=${encodeURIComponent(key)}`)
+      .then((res) => {
+        if (!cancelled) setResolvedAudioUrl(res.url);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedAudioUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [edl?.audio?.voiceoverUrl]);
 
   // Simulated progress for sync (in-process) render until backend reports real progress. 0–1 scale.
   useEffect(() => {
@@ -718,6 +750,7 @@ export function EdlEditor({
       edl={edl}
       playUrl={playUrl}
       resolvedClipUrls={resolvedClipUrls}
+      resolvedAudioUrl={resolvedAudioUrl}
       onEdlChange={updateEdl}
       onClose={onClose}
       onExport={handleSaveAndRerender}

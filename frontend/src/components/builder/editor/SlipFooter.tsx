@@ -1,5 +1,4 @@
 import { X, Check } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 
 interface SlipFooterProps {
   onCancel: () => void;
@@ -11,28 +10,27 @@ const instruction =
 
 export function SlipFooter({ onCancel, onConfirm }: SlipFooterProps) {
   return (
-    <footer className="flex-shrink-0 flex flex-col gap-3 px-4 pb-6 pt-2">
-      <p className="text-center text-sm text-muted-foreground">{instruction}</p>
-      <div className="flex justify-between items-center">
-        <Button
+    <footer className="flex-shrink-0 flex flex-col border-t border-border">
+      <p className="text-center text-[11px] text-muted-foreground mt-3 px-4">
+        {instruction}
+      </p>
+      <div className="flex items-center justify-between px-8 py-5">
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
           onClick={onCancel}
           aria-label="Cancel"
-          className="rounded-full"
+          className="w-12 h-12 rounded-full bg-editor-surface flex items-center justify-center hover:bg-editor-surface-hover transition-colors min-w-[48px] min-h-[48px]"
         >
-          <X className="h-5 w-5" />
-        </Button>
-        <Button
+          <X size={22} className="text-muted-foreground" />
+        </button>
+        <button
           type="button"
           onClick={onConfirm}
           aria-label="Confirm"
-          className="rounded-full gap-2"
+          className="w-12 h-12 rounded-full bg-primary flex items-center justify-center hover:opacity-90 transition-opacity min-w-[48px] min-h-[48px]"
         >
-          <Check className="h-5 w-5" />
-          Confirm
-        </Button>
+          <Check size={22} className="text-primary-foreground" />
+        </button>
       </div>
     </footer>
   );

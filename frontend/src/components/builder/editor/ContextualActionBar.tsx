@@ -66,7 +66,7 @@ export function ContextualActionBar({
   const handleEdit = () => {
     if (!selectedBlock) return;
     if (selectedBlock.type === 'adjust') setActiveTool('adjust');
-    else if (selectedBlock.type === 'audio') setActiveTool('audio');
+    else if (selectedBlock.type === 'audio' || selectedBlock.type === 'music') setActiveTool('audio');
     else if (selectedBlock.type === 'text') setActiveTool('captions');
     else if (selectedBlock.type === 'video') setActiveTool('trim');
     onEdit?.();

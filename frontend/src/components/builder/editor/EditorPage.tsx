@@ -1,15 +1,19 @@
 import { useState, useCallback, useEffect, useRef, type RefObject } from 'react';
 import { motion } from 'framer-motion';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { PreviewPlayer } from './PreviewPlayer';
+import { LivePreviewPlayer } from './LivePreviewPlayer';
 import { TimelineTracks } from './TimelineTracks';
+import { PlaybackControls } from './PlaybackControls';
+import { BottomToolbar } from './BottomToolbar';
+import { ClipToolbar } from './ClipToolbar';
 import { ContextualActionBar } from './ContextualActionBar';
 import { SlipModeOverlay } from './SlipModeOverlay';
 import { EditorTopBar } from './EditorTopBar';
+import { ToolSheet } from './ToolSheet';
 import { AdjustSheet, AdjustSheetContent } from './AdjustSheet';
-import { AudioSheet, AudioSheetContent } from './AudioSheet';
+import { AudioControlSheet } from './AudioControlSheet';
 import { CaptionsSheet, CaptionsSheetContent } from './CaptionsSheet';
-import { TrimSheet, TrimSheetContent } from './TrimSheet';
+import { TrimSheetContent } from './TrimSheet';
 import { edlEditorStore, getSelectedClipId } from '@/store/edlEditorStore';
 import type { EDL } from '@/lib/api';
 import type { ExportResolution, ExportFps } from './ExportModal';
@@ -21,6 +25,8 @@ interface EditorPageProps {
   playUrl: string | null;
   /** Resolved playable URLs for timeline clips (index matches edl.timeline). Used for thumbnails. */
   resolvedClipUrls?: (string | null)[];
+  /** Resolved playable URL for voiceover (S3 → presigned). Used for waveform. */
+  resolvedAudioUrl?: string | null;
   onEdlChange: (patch: Partial<EDL> | ((prev: EDL) => EDL)) => void;
   onClose: () => void;
   onExport: (options?: import('./ExportModal').ExportOptions) => void;
@@ -50,6 +56,7 @@ export function EditorPage({
   edl,
   playUrl,
   resolvedClipUrls = [],
+  resolvedAudioUrl = null,
   onEdlChange,
   onClose,
   onExport,
@@ -76,8 +83,19 @@ export function EditorPage({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+
+  const playheadSecRef = useRef(0);
+  const lastPlayheadUpdateRef = useRef(0);
+  const throttledSetPlayheadSec = useCallback((sec: number) => {
+    const now = performance.now();
+    if (now - lastPlayheadUpdateRef.current >= 100) {
+      lastPlayheadUpdateRef.current = now;
+      setPlayheadSec(sec);
+    }
+  }, []);
 
   // Move focus into the editor when content mounts so mobile treats it as the active layer (fixes unclickable / no scroll until Export tapped).
   useEffect(() => {
@@ -112,6 +130,7 @@ export function EditorPage({
   );
 
   const activeTool = edlEditorStore((s) => s.activeTool);
+  const setSlipMode = edlEditorStore((s) => s.setSlipMode);
   const selectedClipId = edlEditorStore(getSelectedClipId);
   const selectedClipIndex =
     selectedClipId == null
@@ -140,13 +159,7 @@ export function EditorPage({
 
   useEffect(() => {
     setPlayheadSec(0);
-    const t = setTimeout(() => {
-      if (videoRef?.current) {
-        videoRef.current.currentTime = 0;
-      }
-    }, 0);
-    return () => clearTimeout(t);
-  }, [playUrl, videoRef]);
+  }, [projectId]);
 
   const handleReorder = useCallback(
     (from: number, to: number) => {
@@ -157,14 +170,39 @@ export function EditorPage({
     [reorderClips, edl.timeline, setSelectedBlock]
   );
 
-  const handleTimelineSeek = useCallback(
-    (sec: number) => {
-      setPlayheadSec(sec);
-      if (videoRef?.current) {
-        videoRef.current.currentTime = sec;
-      }
+  const handleTimelineSeek = useCallback((sec: number) => {
+    playheadSecRef.current = sec;
+    setPlayheadSec(sec);
+  }, []);
+
+  const handlePlayingChange = useCallback((playing: boolean) => {
+    setPlaying(playing);
+    if (!playing) setPlayheadSec(playheadSecRef.current);
+  }, []);
+
+  const handleTogglePlay = useCallback(() => {
+    const video = videoRef?.current;
+    if (!video) return;
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+  }, [videoRef]);
+
+  const handleToolSelect = useCallback(
+    (id: string | null) => {
+      const supported: Array<'adjust' | 'audio' | 'captions' | 'trim'> = [
+        'adjust',
+        'audio',
+        'captions',
+        'trim',
+      ];
+      const next =
+        id && supported.includes(id as 'adjust' | 'audio' | 'captions' | 'trim')
+          ? (id as 'adjust' | 'audio' | 'captions' | 'trim')
+          : null;
+      setActiveTool(activeTool === next ? null : next);
+      setSelectedBlock(null);
     },
-    [videoRef]
+    [activeTool, setActiveTool, setSelectedBlock]
   );
 
   const canSplitAtPlayhead =
@@ -202,9 +240,24 @@ export function EditorPage({
   const initialExportFps: ExportFps =
     edl.output?.fps === 24 || edl.output?.fps === 60 ? edl.output.fps : 30;
 
+  const showToolSheet =
+    !isMobile &&
+    (activeTool === 'adjust' ||
+      activeTool === 'captions' ||
+      (activeTool === 'trim' && selectedClipIndex != null && selectedClipIndex < edl.timeline.length));
+
+  const toolSheetTitle =
+    activeTool === 'adjust'
+      ? 'Adjust'
+      : activeTool === 'captions'
+          ? 'Captions'
+          : activeTool === 'trim'
+            ? `Trim — Clip ${(selectedClipIndex ?? 0) + 1}`
+            : '';
+
   return (
     <motion.div
-      className="fixed inset-0 z-[200] flex flex-col bg-background min-h-[100dvh]"
+      className="fixed inset-0 z-[200] flex flex-col bg-editor-bg-immersive min-h-[100dvh] overflow-hidden select-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -249,24 +302,53 @@ export function EditorPage({
       />
 
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-          <main className="flex-1 min-h-0 flex flex-col min-w-0 p-3 md:p-4">
-            <section className="flex-1 min-h-0 flex items-center justify-center max-h-[50vh] md:max-h-[60vh] px-6 md:px-10">
-              <PreviewPlayer
-                playUrl={playUrl}
-                edlColor={edl.color}
-                overlays={edl.overlays}
-                playheadSec={playheadSec}
-                onTimeUpdate={setPlayheadSec}
-                onDurationChange={setVideoDuration}
-                videoRef={videoRef}
-                className="w-full max-w-[280px] md:max-w-md h-full"
-              />
+        <main className="flex-1 min-h-0 flex flex-col min-w-0 flex-1">
+          <section className="relative flex flex-1 min-h-0 items-center justify-center px-4 py-4 bg-editor-bg-immersive">
+            <div
+              className="relative w-full max-w-[240px] md:max-w-[280px] h-full max-h-full rounded-2xl overflow-hidden bg-editor-preview shadow-2xl shadow-black/40"
+              style={{ aspectRatio: '9/16' }}
+            >
+                <LivePreviewPlayer
+                  timeline={edl.timeline}
+                  resolvedClipUrls={resolvedClipUrls}
+                  playheadSec={playheadSec}
+                  onTimeUpdate={throttledSetPlayheadSec}
+                  onDurationChange={setVideoDuration}
+                  onPlayingChange={handlePlayingChange}
+                  edlColor={edl.color}
+                  overlays={edl.overlays}
+                  selectedOverlayId={
+                    selectedBlock?.type === 'text' ? selectedBlock.id : null
+                  }
+                  onSelectOverlay={(id) =>
+                    setSelectedBlock({ type: 'text', id })
+                  }
+                  videoRef={videoRef}
+                  className="absolute inset-0 w-full h-full"
+                  voiceoverUrl={resolvedAudioUrl ?? null}
+                  videoTrackMuted={edl.audio?.videoTrackMuted ?? false}
+                  audioTrackMuted={edl.audio?.audioTrackMuted ?? false}
+                  voiceVolume={edl.audio?.voiceVolume ?? 1}
+                  playheadSecRef={playheadSecRef}
+                />
+              </div>
             </section>
-            <section className="flex-shrink-0 pt-3 flex flex-col gap-2">
+            <PlaybackControls
+              isPlaying={playing}
+              currentTime={playheadSec}
+              duration={totalDuration}
+              onTogglePlay={handleTogglePlay}
+              onUndo={onUndo}
+              onRedo={onRedo}
+              canUndo={canUndo}
+              canRedo={canRedo}
+            />
+          <section className="flex-shrink-0 flex flex-col gap-0 px-2 pb-2 md:px-4 md:pb-4">
+            <div className="rounded-xl overflow-hidden border border-border/30 bg-editor-timeline/80 shadow-lg shadow-black/20">
               <TimelineTracks
                 edl={edl}
                 playheadSec={playheadSec}
+                playheadSecRef={playheadSecRef}
                 videoDuration={videoDuration}
                 resolvedClipUrls={resolvedClipUrls}
                 onReorder={handleReorder}
@@ -278,67 +360,109 @@ export function EditorPage({
                 draggingIndex={draggingIndex}
                 setDragOverIndex={setDragOverIndex}
                 setDraggingIndex={setDraggingIndex}
+                trimActive={activeTool === 'trim' && selectedClipIndex != null && selectedClipIndex < edl.timeline.length}
+                audioUrl={resolvedAudioUrl ?? edl.audio?.voiceoverUrl ?? null}
+                onEdlChange={onEdlChange}
               />
-            </section>
-          </main>
-          {!isMobile && (
-            <aside className="hidden md:flex w-72 flex-shrink-0 border-l border-border flex-col overflow-hidden bg-muted/20">
-              {activeTool === 'adjust' && (
-                <div className="flex flex-col overflow-y-auto p-4">
-                  <h3 className="text-sm font-semibold mb-3">Adjust</h3>
-                  <AdjustSheetContent edl={edl} onEdlChange={onEdlChange} />
-                </div>
-              )}
-              {activeTool === 'audio' && (
-                <div className="flex flex-col overflow-y-auto p-4">
-                  <h3 className="text-sm font-semibold mb-3">Audio</h3>
-                  <AudioSheetContent edl={edl} onEdlChange={onEdlChange} />
-                </div>
-              )}
-              {activeTool === 'captions' && (
-                <div className="flex flex-col overflow-y-auto p-4">
-                  <h3 className="text-sm font-semibold mb-3">Captions</h3>
-                  <CaptionsSheetContent edl={edl} onEdlChange={onEdlChange} />
-                </div>
-              )}
-              {activeTool === 'trim' && selectedClipIndex != null && selectedClipIndex < edl.timeline.length && (
-                <div className="flex flex-col overflow-y-auto p-4">
-                  <h3 className="text-sm font-semibold mb-3">Trim — Clip {selectedClipIndex + 1}</h3>
-                  <TrimSheetContent edl={edl} onEdlChange={onEdlChange} selectedClipIndex={selectedClipIndex} />
-                </div>
-              )}
-            </aside>
-          )}
-        </div>
+            </div>
+          </section>
+        </main>
 
-        <ContextualActionBar
-          onEdit={undefined}
-          onDeleteClip={selectedClipIndex != null ? () => onDeleteClip?.(selectedClipIndex) : undefined}
-          canDeleteClip={selectedClipIndex != null && edl.timeline.length > 1}
-          onDeleteOverlay={
-            selectedOverlayIndexResolved != null && onDeleteOverlay
-              ? () => onDeleteOverlay(selectedOverlayIndexResolved)
-              : undefined
-          }
-          canDeleteOverlay={selectedOverlayIndexResolved != null}
-          onDuplicateClip={selectedClipIndex != null ? () => onDuplicateClip?.(selectedClipIndex) : undefined}
-          onSplitClipAtPlayhead={
-            selectedClipIndex != null && onSplitClipAtPlayhead
-              ? () => onSplitClipAtPlayhead(selectedClipIndex, playheadSec)
-              : undefined
-          }
-          canSplitAtPlayhead={canSplitAtPlayhead}
-          onEnterSlip={undefined}
-          onExitSlip={undefined}
-        />
+        <ToolSheet
+          isOpen={showToolSheet}
+          onClose={() => setActiveTool(null)}
+          title={toolSheetTitle}
+        >
+          {activeTool === 'adjust' && <AdjustSheetContent edl={edl} onEdlChange={onEdlChange} />}
+          {activeTool === 'captions' && <CaptionsSheetContent edl={edl} onEdlChange={onEdlChange} />}
+          {activeTool === 'trim' && selectedClipIndex != null && selectedClipIndex < edl.timeline.length && !isMobile && (
+            <TrimSheetContent edl={edl} onEdlChange={onEdlChange} selectedClipIndex={selectedClipIndex} />
+          )}
+        </ToolSheet>
+
+        {isMobile && activeTool === 'trim' && selectedClipIndex != null && selectedClipIndex < edl.timeline.length && (
+          <div className="flex-shrink-0 border-t border-border/30 bg-editor-surface/95 px-4 py-3 overflow-y-auto max-h-[40vh]">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h3 className="text-sm font-semibold text-foreground">Trim — Clip {selectedClipIndex + 1}</h3>
+              <button
+                type="button"
+                onClick={() => setActiveTool(null)}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Done
+              </button>
+            </div>
+            <TrimSheetContent edl={edl} onEdlChange={onEdlChange} selectedClipIndex={selectedClipIndex} />
+          </div>
+        )}
+
+        {selectedClipIndex != null ? (
+          <ClipToolbar
+            clipType="video"
+            onSlip={() => {
+              const clip = edl.timeline[selectedClipIndex];
+              if (clip?.id) setSlipMode(true, clip.id);
+            }}
+            onEdit={() => setActiveTool('trim')}
+            onVolume={() => setActiveTool('audio')}
+            onSplit={
+              onSplitClipAtPlayhead && canSplitAtPlayhead
+                ? () => onSplitClipAtPlayhead(selectedClipIndex, playheadSec)
+                : undefined
+            }
+            canSplit={canSplitAtPlayhead}
+            onDelete={
+              onDeleteClip && edl.timeline.length > 1
+                ? () => onDeleteClip(selectedClipIndex)
+                : undefined
+            }
+            canDelete={edl.timeline.length > 1}
+            onDuplicate={onDuplicateClip ? () => onDuplicateClip(selectedClipIndex) : undefined}
+            onCopy={onDuplicateClip ? () => onDuplicateClip(selectedClipIndex) : undefined}
+          />
+        ) : selectedOverlayIndexResolved != null ? (
+          <ContextualActionBar
+            onEdit={undefined}
+            onDeleteClip={undefined}
+            canDeleteClip={false}
+            onDeleteOverlay={
+              onDeleteOverlay ? () => onDeleteOverlay(selectedOverlayIndexResolved) : undefined
+            }
+            canDeleteOverlay
+            onDuplicateClip={undefined}
+            onSplitClipAtPlayhead={undefined}
+            canSplitAtPlayhead={false}
+            onEnterSlip={undefined}
+            onExitSlip={undefined}
+          />
+        ) : (
+          <BottomToolbar
+            activeToolId={activeTool ?? null}
+            onToolSelect={handleToolSelect}
+            trimDisabled={selectedClipIndex == null}
+          />
+        )}
       </div>
 
+      <AudioControlSheet
+        open={activeTool === 'audio'}
+        onClose={() => setActiveTool(null)}
+        edl={edl}
+        onEdlChange={onEdlChange}
+        initialTab={
+          selectedClipIndex != null
+            ? 'original'
+            : selectedBlock?.type === 'music'
+              ? 'music'
+              : selectedBlock?.type === 'audio'
+                ? 'voiceover'
+                : 'original'
+        }
+      />
       {isMobile && (
         <>
           <AdjustSheet edl={edl} onEdlChange={onEdlChange} />
-          <AudioSheet edl={edl} onEdlChange={onEdlChange} />
           <CaptionsSheet edl={edl} onEdlChange={onEdlChange} />
-          <TrimSheet edl={edl} onEdlChange={onEdlChange} selectedClipIndex={selectedClipIndex ?? null} />
         </>
       )}
     </motion.div>

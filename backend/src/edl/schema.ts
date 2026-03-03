@@ -40,6 +40,16 @@ export const audioSchema = z.object({
   musicEnabled: z.boolean().optional(),
   musicVolume: z.number().min(0).max(1).optional(),
   voiceVolume: z.number().min(0).max(1).optional(),
+  /** Original video/clip volume (0–1). */
+  originalVolume: z.number().min(0).max(1).optional(),
+  /** When true, originalVolume applies to all video clips. */
+  applyOriginalToAll: z.boolean().optional(),
+  /** When true, video (clip) track is muted in timeline. */
+  videoTrackMuted: z.boolean().optional(),
+  /** When true, audio (voiceover/music) track is muted in timeline. */
+  audioTrackMuted: z.boolean().optional(),
+  /** When true, music track is muted in timeline. */
+  musicTrackMuted: z.boolean().optional(),
 });
 
 export const colorSchema = z.object({

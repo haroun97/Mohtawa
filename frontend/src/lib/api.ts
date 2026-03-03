@@ -1,4 +1,13 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001/api";
+/** API base URL. In dev, uses current host (so LAN IP works without editing .env when IP changes). */
+function getApiBase(): string {
+  const fromEnv = import.meta.env.VITE_API_BASE;
+  if (fromEnv) return fromEnv;
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    return `http://${window.location.hostname}:3001/api`;
+  }
+  return "http://localhost:3001/api";
+}
+const API_BASE = getApiBase();
 
 interface ApiOptions {
   method?: string;
@@ -59,6 +68,37 @@ export const api = {
   post: <T>(endpoint: string, body?: unknown) => request<T>(endpoint, { method: "POST", body }),
   put: <T>(endpoint: string, body: unknown) => request<T>(endpoint, { method: "PUT", body }),
   delete: <T>(endpoint: string) => request<T>(endpoint, { method: "DELETE" }),
+};
+
+export interface IdeaDocListItem {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IdeaDocFull {
+  id: string;
+  userId: string;
+  title: string;
+  content: object;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const ideaDocsApi = {
+  list: (trash = false) =>
+    api.get<IdeaDocListItem[]>(`/idea-docs${trash ? "?trash=1" : ""}`),
+  create: (title?: string) =>
+    api.post<IdeaDocFull>("/idea-docs", title ? { title } : {}),
+  get: (id: string) => api.get<IdeaDocFull>(`/idea-docs/${id}`),
+  update: (id: string, data: { title?: string; content?: object }) =>
+    api.put<IdeaDocFull>(`/idea-docs/${id}`, data),
+  delete: (id: string, permanent = false) =>
+    api.delete<{ deleted: boolean; permanent: boolean }>(
+      `/idea-docs/${id}${permanent ? "?permanent=1" : ""}`
+    ),
+  restore: (id: string) => api.post<IdeaDocFull>(`/idea-docs/${id}/restore`, {}),
 };
 
 /** POST with multipart/form-data (e.g. file upload). No Content-Type header so browser sets boundary. */
@@ -155,6 +195,16 @@ export interface EdlAudio {
   musicEnabled?: boolean;
   musicVolume?: number;
   voiceVolume?: number;
+  /** Original video/clip volume (0–1). */
+  originalVolume?: number;
+  /** When true, original volume applies to all video clips. */
+  applyOriginalToAll?: boolean;
+  /** When true, video (clip) track is muted. */
+  videoTrackMuted?: boolean;
+  /** When true, audio (voiceover/music) track is muted. */
+  audioTrackMuted?: boolean;
+  /** When true, music track is muted. */
+  musicTrackMuted?: boolean;
 }
 
 export interface EdlColor {

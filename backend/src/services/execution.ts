@@ -30,6 +30,15 @@ interface EdgeData {
   targetHandle?: string;
 }
 
+/** Per-iteration step (node run inside a For Each loop). */
+export interface IterationStepLog {
+  nodeId: string;
+  nodeTitle: string;
+  status: "idle" | "running" | "success" | "error";
+  output?: Record<string, unknown>;
+  error?: string;
+}
+
 interface StepLog {
   nodeId: string;
   nodeType: string;
@@ -43,6 +52,12 @@ interface StepLog {
   error?: string;
   errorStack?: string;
   reviewSessionId?: string;
+  /** When this step is flow.for_each: one entry per iteration with child step logs. */
+  iterationSteps?: Array<{
+    iteration: number;
+    itemTitle?: string;
+    steps: IterationStepLog[];
+  }>;
 }
 
 /** Persist last completed run log on the workflow so frontend can restore status/download when no completed run is in the list. */
@@ -71,6 +86,7 @@ async function persistLastCompletedRunLog(
       output: l.output,
       error: l.error,
       reviewSessionId: l.reviewSessionId,
+      iterationSteps: l.iterationSteps,
     })),
   };
   await prisma.workflow.update({
@@ -150,7 +166,16 @@ function topologicalSort(
   return sorted;
 }
 
-export async function executeWorkflow(workflowId: string, userId: string) {
+export interface ExecuteWorkflowOptions {
+  /** When workflow has Ideas Source (In-app Editor), pass the selected doc from the client. */
+  ideaDoc?: { title?: string; content: unknown };
+}
+
+export async function executeWorkflow(
+  workflowId: string,
+  userId: string,
+  options: ExecuteWorkflowOptions = {},
+) {
   const workflow = await prisma.workflow.findUnique({
     where: { id: workflowId },
   });
@@ -180,13 +205,16 @@ export async function executeWorkflow(workflowId: string, userId: string) {
     userId,
     nodes: workflow.nodes,
     edges: workflow.edges,
+    ideaDoc: options.ideaDoc,
   });
 
   if (jobId) {
     return formatExecution(execution);
   }
 
-  runExecution(execution.id, nodes, edges, userId).catch((err) => {
+  runExecution(execution.id, nodes, edges, userId, {
+    ideaDoc: options.ideaDoc,
+  }).catch((err) => {
     console.error(`Execution ${execution.id} failed unexpectedly:`, err);
   });
 
@@ -198,6 +226,8 @@ export interface RunExecutionOptions {
   startFromStepIndex?: number;
   /** When rerunning: logs for steps before startFromStepIndex (to preserve success state). */
   previousLogs?: StepLog[];
+  /** For Ideas Source (In-app Editor): doc from client. */
+  ideaDoc?: { title?: string; content: unknown };
 }
 
 async function runExecution(
@@ -211,6 +241,7 @@ async function runExecution(
     priorOutputs = {},
     startFromStepIndex = 0,
     previousLogs,
+    ideaDoc,
   } = options;
   const activeNodes = nodes.filter(
     (n) => n.data.status !== "disabled",
@@ -246,6 +277,7 @@ async function runExecution(
 
   for (let i = startFromStepIndex; i < sorted.length; i++) {
     const node = sorted[i];
+    const nodeType = node.data.definition.type || node.type;
 
     stepLogs[i].status = "running";
     stepLogs[i].startedAt = new Date().toISOString();
@@ -255,17 +287,209 @@ async function runExecution(
       data: { logs: JSON.stringify(stepLogs) },
     });
 
-    // Gather inputs from connected upstream nodes
+    // Scalable input: key by source node id so multiple upstreams never overwrite (each connection keeps its own key).
     const incomingEdges = edges.filter((e) => e.target === node.id);
     const inputData: Record<string, unknown> = {};
     for (const edge of incomingEdges) {
       const upstream = nodeOutputs.get(edge.source);
       if (upstream) {
-        inputData[edge.sourceHandle || "output"] = upstream;
+        inputData[edge.source] = upstream;
+      }
+    }
+    if (nodeType === "ideas.source") {
+      const config = node.data.config || {};
+      if (config.provider === "in_app_editor") {
+        const { getIdeaDocForExecution } = await import("../services/ideaDocs.js");
+        const docMode = (config.inAppEditorDocMode as string) || "single";
+        if (docMode === "multi" && Array.isArray(config.ideaDocIds) && config.ideaDocIds.length > 0) {
+          const docs = [];
+          for (const id of config.ideaDocIds as unknown[]) {
+            const docId = String(id);
+            const fetched = await getIdeaDocForExecution(docId, userId);
+            if (fetched) {
+              docs.push({ id: docId, ...fetched });
+            }
+          }
+          if (docs.length > 0) {
+            inputData._ideaDocs = docs;
+          } else if (ideaDoc) {
+            inputData._ideaDoc = ideaDoc;
+          }
+        } else if (config.ideaDocId) {
+          const fetched = await getIdeaDocForExecution(String(config.ideaDocId), userId);
+          if (fetched) inputData._ideaDoc = fetched;
+          else if (ideaDoc) inputData._ideaDoc = ideaDoc;
+        } else if (ideaDoc) {
+          inputData._ideaDoc = ideaDoc;
+        }
+      } else if (ideaDoc) {
+        inputData._ideaDoc = ideaDoc;
       }
     }
 
     stepLogs[i].input = inputData;
+
+    // For Each: run downstream nodes once per item and inject _item
+    if (nodeType === "flow.for_each") {
+      let items: unknown[] = [];
+      for (const v of Object.values(inputData)) {
+        if (v && typeof v === "object" && "items" in v && Array.isArray((v as { items: unknown[] }).items)) {
+          items = (v as { items: unknown[] }).items;
+          break;
+        }
+      }
+
+      const forEachId = node.id;
+      const downstreamStart = i + 1;
+      const downstreamNodes = sorted.slice(downstreamStart);
+      const iterationStepsLog: StepLog["iterationSteps"] = [];
+      const results: Array<{ itemId: string; outputsByNodeId: Record<string, unknown> }> = [];
+      let lastIterationOutputs = new Map<string, Record<string, unknown>>();
+
+      for (let k = 0; k < items.length; k++) {
+        const item = items[k] as Record<string, unknown> | undefined;
+        const itemObj = item && typeof item === "object" ? item : {};
+        const itemId = String(itemObj.id ?? `item-${k + 1}`);
+        const itemTitle = String(itemObj.title ?? itemId);
+
+        const iterOutputs = new Map<string, Record<string, unknown>>(nodeOutputs);
+        iterOutputs.set(forEachId, { _item: itemObj });
+
+        const iterSteps: IterationStepLog[] = [];
+
+        for (let j = downstreamStart; j < sorted.length; j++) {
+          const downNode = sorted[j];
+          const downType = downNode.data.definition.type || downNode.type;
+          // Run preview.loop_outputs once after the loop with aggregated results, not per iteration.
+          if (downType === "preview.loop_outputs") {
+            const placeholder = { items: [] as unknown[] };
+            iterOutputs.set(downNode.id, placeholder);
+            lastIterationOutputs.set(downNode.id, placeholder);
+            iterSteps.push({
+              nodeId: downNode.id,
+              nodeTitle: downNode.data.definition.title,
+              status: "success",
+              output: placeholder,
+            });
+            continue;
+          }
+          // Key by source so multiple upstreams (e.g. Auto Edit + Preview Loop Outputs) don't overwrite.
+          const downIncoming = edges.filter((e) => e.target === downNode.id);
+          const downInput: Record<string, unknown> = {};
+          for (const edge of downIncoming) {
+            const src = edge.source;
+            if (src === forEachId) {
+              downInput._item = itemObj;
+            } else {
+              const up = iterOutputs.get(src);
+              if (up) downInput[src] = up;
+            }
+          }
+
+          const downCtx: ExecutorContext = {
+            nodeId: downNode.id,
+            nodeType: downType,
+            category: downNode.data.definition.category,
+            config: downNode.data.config || {},
+            inputData: downInput,
+            getApiKey,
+            userId,
+            getVoiceProfile,
+            executionId,
+            stepIndex: j,
+          };
+
+          const downResult = await executeNode(downCtx);
+          if ("error" in downResult) {
+            iterSteps.push({
+              nodeId: downNode.id,
+              nodeTitle: downNode.data.definition.title,
+              status: "error",
+              error: downResult.error,
+            });
+            lastIterationOutputs.set(downNode.id, { error: downResult.error });
+            break;
+          }
+          const out = downResult.output as Record<string, unknown>;
+          iterOutputs.set(downNode.id, out);
+          lastIterationOutputs.set(downNode.id, out);
+          iterSteps.push({
+            nodeId: downNode.id,
+            nodeTitle: downNode.data.definition.title,
+            status: "success",
+            output: out,
+          });
+        }
+
+        results.push({
+          itemId,
+          outputsByNodeId: Object.fromEntries(lastIterationOutputs),
+        });
+        iterationStepsLog.push({
+          iteration: k,
+          itemTitle,
+          steps: iterSteps,
+        });
+      }
+
+      stepLogs[i].status = "success";
+      stepLogs[i].output = { results, items };
+      stepLogs[i].iterationSteps = iterationStepsLog;
+      stepLogs[i].completedAt = new Date().toISOString();
+      stepLogs[i].durationMs = 0;
+      nodeOutputs.set(forEachId, { results, items });
+
+      const forEachOutput = { results, items };
+
+      for (let j = downstreamStart; j < sorted.length; j++) {
+        const downNode = sorted[j];
+        const downType = downNode.data.definition.type || downNode.type;
+        if (downType === "preview.loop_outputs") {
+          // Run once after the loop with aggregated For Each output.
+          const ploCtx: ExecutorContext = {
+            nodeId: downNode.id,
+            nodeType: downType,
+            category: downNode.data.definition.category,
+            config: downNode.data.config || {},
+            inputData: { output: forEachOutput },
+            getApiKey,
+            userId,
+            getVoiceProfile,
+            executionId,
+            stepIndex: j,
+          };
+          const ploResult = await executeNode(ploCtx);
+          const completedAt = new Date().toISOString();
+          if ("error" in ploResult) {
+            stepLogs[j].status = "error";
+            stepLogs[j].error = ploResult.error;
+            stepLogs[j].output = undefined;
+            stepLogs[j].completedAt = completedAt;
+            nodeOutputs.set(downNode.id, { error: ploResult.error });
+          } else {
+            const out = ploResult.output as Record<string, unknown>;
+            stepLogs[j].status = "success";
+            stepLogs[j].output = out;
+            stepLogs[j].completedAt = completedAt;
+            nodeOutputs.set(downNode.id, out);
+          }
+          continue;
+        }
+        const out = lastIterationOutputs.get(downNode.id);
+        stepLogs[j].status = out && !("error" in out) ? "success" : "error";
+        stepLogs[j].output = out;
+        stepLogs[j].completedAt = new Date().toISOString();
+        if (out) nodeOutputs.set(downNode.id, out);
+      }
+
+      await prisma.workflowExecution.update({
+        where: { id: executionId },
+        data: { logs: JSON.stringify(stepLogs) },
+      });
+
+      i = sorted.length - 1;
+      continue;
+    }
 
     const start = Date.now();
 
@@ -401,6 +625,7 @@ export async function runExecutionFromJob(data: ExecutionJobData): Promise<void>
     priorOutputs: data.priorOutputs,
     startFromStepIndex: data.startFromStepIndex ?? 0,
     previousLogs,
+    ideaDoc: data.ideaDoc,
   });
 }
 
@@ -567,12 +792,13 @@ export async function executeSingleNode(
     }
   }
 
+  // Key by source (scalable: multiple upstreams keep separate keys).
   const incomingEdges = edges.filter((e) => e.target === nodeId);
   const inputData: Record<string, unknown> = {};
   for (const edge of incomingEdges) {
     const upstream = priorOutputs[edge.source];
     if (upstream) {
-      inputData[edge.sourceHandle || "output"] = upstream;
+      inputData[edge.source] = upstream;
     }
   }
 

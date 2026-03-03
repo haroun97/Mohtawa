@@ -6,6 +6,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Dashboard from "./pages/Dashboard";
 import Builder from "./pages/Builder";
+import IdeasEditor from "./pages/IdeasEditor";
 import Settings from "./pages/Settings";
 import VoiceProfiles from "./pages/VoiceProfiles";
 import Login from "./pages/Login";
@@ -52,6 +53,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <VoiceProfiles />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/editor"
+              element={
+                <ProtectedRoute>
+                  <IdeasEditor />
                 </ProtectedRoute>
               }
             />

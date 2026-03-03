@@ -1,6 +1,7 @@
 /**
  * S3-compatible object storage (AWS S3, Cloudflare R2, MinIO).
  * Uses env: S3_BUCKET, S3_REGION, S3_ENDPOINT (optional), S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY.
+ * Optional: CLOUDFRONT_DOMAIN — when set, play URLs use CloudFront (Option A) instead of S3 presigned.
  */
 
 import {
@@ -123,13 +124,19 @@ export async function getObjectFromS3(fullKey: string): Promise<Buffer> {
 }
 
 /**
- * Generate a short-lived presigned GET URL for playback (e.g. audio in browser).
+ * Generate a playable GET URL for playback (e.g. audio/video in browser).
  * Key must be the full S3 key (e.g. voice-output/userId/xxx.mp3).
+ * When CLOUDFRONT_DOMAIN is set, returns CloudFront URL (Option A, no signing).
+ * Otherwise returns a short-lived presigned S3 URL.
  */
 export async function getPresignedPlayUrl(
   fullKey: string,
   expiresInSeconds = 900,
 ): Promise<string> {
+  const cloudfrontDomain = process.env.CLOUDFRONT_DOMAIN?.trim().replace(/\/$/, "");
+  if (cloudfrontDomain) {
+    return `https://${cloudfrontDomain}/${fullKey}`;
+  }
   const client = getClient();
   if (!client) {
     throw new Error("S3 not configured. Cannot generate play URL.");

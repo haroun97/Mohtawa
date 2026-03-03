@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 220 15% 10%;
+    --foreground: 0 0% 95%;
+
+    --card: 220 15% 13%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 220 15% 15%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 12% 18%;
+    --secondary-foreground: 0 0% 85%;
+
+    --muted: 220 12% 16%;
+    --muted-foreground: 220 10% 50%;
+
+    --accent: 24 95% 53%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 12% 20%;
+    --input: 220 12% 20%;
+    --ring: 24 95% 53%;
+
+    --radius: 0.75rem;
+
+    /* Editor-specific tokens */
+    --editor-bg: 220 18% 8%;
+    --editor-surface: 220 15% 12%;
+    --editor-surface-hover: 220 15% 16%;
+    --editor-preview-bg: 0 0% 5%;
+    --editor-timeline-bg: 220 15% 10%;
+    --editor-toolbar-bg: 220 18% 9%;
+
+    /* Accent colors */
+    --selection: 45 100% 55%;
+    --selection-foreground: 0 0% 0%;
+    --text-layer: 270 60% 60%;
+    --text-layer-foreground: 0 0% 100%;
+    --audio-waveform: 330 70% 60%;
+    --playhead: 0 0% 100%;
+
+    /* Sidebar (unused but required) */
+    --sidebar-background: 220 18% 8%;
+    --sidebar-foreground: 0 0% 85%;
+    --sidebar-primary: 24 95% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 15% 16%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 220 12% 20%;
+    --sidebar-ring: 24 95% 53%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer utilities {
+  .editor-glass {
+    @apply bg-[hsl(var(--editor-surface))] backdrop-blur-xl;
+  }
+
+  .editor-glass-hover {
+    @apply hover:bg-[hsl(var(--editor-surface-hover))] transition-colors duration-150;
+  }
+
+  .ios-segmented {
+    @apply rounded-lg bg-[hsl(var(--editor-surface))] p-1;
+  }
+
+  .ios-segmented-active {
+    @apply rounded-md bg-[hsl(var(--secondary))] text-foreground shadow-sm;
+  }
+
+  .safe-area-guide {
+    border: 1px dashed hsl(var(--muted-foreground) / 0.2);
+  }
+
+  .timeline-track {
+    @apply rounded-lg overflow-hidden;
+  }
+
+  .clip-selected {
+    box-shadow: 0 0 0 2px hsl(var(--selection));
+  }
+
+  .toolbar-icon {
+    @apply flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors duration-150 cursor-pointer select-none;
+  }
+
+  .toolbar-icon-active {
+    @apply text-primary;
+  }
+
+  .smooth-scroll {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

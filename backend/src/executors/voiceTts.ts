@@ -17,10 +17,19 @@ function resolveText(
 ): string {
   let text = String(config.text ?? "").trim();
   if (text) return text;
+  // When inside For Each: use current item's script or idea
+  const item = inputData._item as Record<string, unknown> | undefined;
+  if (item && typeof item === "object") {
+    const fromItem = String(
+      item.scriptText ?? item.script ?? item.idea ?? item.ideaText ?? "",
+    ).trim();
+    if (fromItem) return fromItem;
+  }
   for (const v of Object.values(inputData)) {
     if (typeof v === "string" && v.trim()) return v.trim();
-    if (v && typeof v === "object" && "text" in v) {
-      const t = String((v as Record<string, unknown>).text ?? "").trim();
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      const t = String(o.text ?? o.script ?? "").trim();
       if (t) return t;
     }
   }

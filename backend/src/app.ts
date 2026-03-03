@@ -11,6 +11,7 @@ import storageRoutes from "./routes/storage";
 import mediaRoutes from "./routes/media";
 import projectRoutes from "./routes/projects";
 import renderRoutes from "./routes/renders";
+import ideaDocsRoutes from "./routes/ideaDocs";
 import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
@@ -18,13 +19,18 @@ const app = express();
 // Security headers
 app.use(helmet());
 
-// Allow multiple origins (comma-separated in CORS_ORIGIN) for e.g. localhost + LAN IP (iPhone)
+// In development: allow any origin so LAN IP works when it changes. In production: use CORS_ORIGIN list.
 const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:8080";
 const corsOrigins = corsOrigin.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
 
 app.use(
   cors({
-    origin: corsOrigins.length > 1 ? corsOrigins : corsOrigins[0],
+    origin:
+      process.env.NODE_ENV === "development"
+        ? true // allow any origin in dev (desktop + phone at any LAN IP)
+        : corsOrigins.length > 1
+          ? corsOrigins
+          : corsOrigins[0],
     credentials: true,
   }),
 );
@@ -71,6 +77,7 @@ app.use("/api/storage", storageRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/renders", renderRoutes);
+app.use("/api/idea-docs", ideaDocsRoutes);
 
 app.use(errorHandler);
 

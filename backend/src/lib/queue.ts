@@ -14,6 +14,8 @@ export interface ExecutionJobData {
   userId: string;
   nodes: string;
   edges: string;
+  /** For Ideas Source (In-app Editor): doc from client. */
+  ideaDoc?: { title?: string; content: unknown };
   /** When rerunning from failed: pre-seeded outputs from previous run (nodeId -> output). */
   priorOutputs?: Record<string, Record<string, unknown>>;
   /** Start from this step index (for rerun from failed). */

@@ -19,8 +19,18 @@ const statusIcon: Record<string, React.ReactNode> = {
 export function RunLogs() {
   const { runLog, lastCompletedRunLog, rerunFromNode, runWorkflow, getActiveWorkflow } = useWorkflowStore();
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
+  const [expandedIterations, setExpandedIterations] = useState<Set<string>>(new Set());
   const [reviewStep, setReviewStep] = useState<{ stepId: string; output: Record<string, unknown> } | null>(null);
   const [downloadingStepKey, setDownloadingStepKey] = useState<string | null>(null);
+
+  const toggleIteration = (stepNodeId: string, iteration: number) => {
+    const key = `${stepNodeId}-${iteration}`;
+    setExpandedIterations((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
   const workflowId = getActiveWorkflow()?.id ?? '';
   const executionId = runLog?.id ?? '';
   const nodes = getActiveWorkflow()?.nodes ?? [];
@@ -109,6 +119,47 @@ export function RunLogs() {
                           </Button>
                         </div>
                       )}
+                      {step.iterationSteps && step.iterationSteps.length > 0 && (
+                        <div className="space-y-1.5 mb-2">
+                          <p className="text-[10px] font-semibold text-muted-foreground">Iterations</p>
+                          {step.iterationSteps.map((iter) => {
+                            const iterKey = `${step.nodeId}-${iter.iteration}`;
+                            const isExpanded = expandedIterations.has(iterKey);
+                            return (
+                              <div key={iterKey} className="border rounded-md overflow-hidden bg-muted/30">
+                                <button
+                                  type="button"
+                                  className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-accent/50 text-xs"
+                                  onClick={() => toggleIteration(step.nodeId, iter.iteration)}
+                                >
+                                  <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                  <span className="font-medium">
+                                    Iteration {iter.iteration + 1}
+                                    {iter.itemTitle ? `: ${iter.itemTitle}` : ''}
+                                  </span>
+                                </button>
+                                {isExpanded && (
+                                  <div className="px-2 pb-2 space-y-2 border-t">
+                                    {iter.steps.map((subStep) => (
+                                      <div key={subStep.nodeId} className="pt-1.5">
+                                        <p className="text-[10px] font-medium text-muted-foreground mb-1">{subStep.nodeTitle}</p>
+                                        {subStep.output && hasPlayableAudio(subStep.output) && (
+                                          <div className="mb-1">
+                                            <AudioPlayer output={subStep.output} />
+                                          </div>
+                                        )}
+                                        {subStep.error && (
+                                          <pre className="text-[10px] bg-destructive/10 text-destructive rounded p-1.5">{subStep.error}</pre>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       {(() => {
                         const stepWithVideo =
                           step.output && hasFinalVideoOutput(step.output as Record<string, unknown>)
@@ -148,9 +199,30 @@ export function RunLogs() {
                       })()}
                       {step.output && (() => {
                         const output = step.output as Record<string, unknown>;
+                        const loopItems = Array.isArray((output as any).items)
+                          ? ((output as any).items as Array<{ id: string; title?: string; audioUrl?: string }>)
+                          : null;
+                        const showLoopPlaylist = !!loopItems?.length && loopItems.some(it => typeof it.audioUrl === 'string' && !!it.audioUrl);
                         const showPlayer = hasPlayableAudio(output);
                         return (
                           <div className="space-y-2">
+                            {showLoopPlaylist && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-muted-foreground mb-1">Loop items</p>
+                                <div className="space-y-1.5">
+                                  {loopItems!.map((item) => (
+                                    <div key={item.id} className="border rounded px-2 py-1.5 bg-muted/40">
+                                      <p className="text-[10px] font-medium mb-1 truncate">
+                                        {item.title ?? item.id}
+                                      </p>
+                                      {item.audioUrl && (
+                                        <AudioPlayer output={{ audioUrl: item.audioUrl }} />
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             {showPlayer && (
                               <div>
                                 <p className="text-[10px] font-semibold text-muted-foreground mb-1">Play</p>

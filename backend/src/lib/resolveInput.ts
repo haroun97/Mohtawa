@@ -1,6 +1,11 @@
 /**
  * Resolve a value from workflow inputData by key names, searching recursively.
- * Handles nested output from pass-through nodes (e.g. Preview Output wrapping upstream).
+ *
+ * The execution engine keys inputData by source node id (inputData[edge.source] = upstream)
+ * so multiple upstream connections never overwrite each other. Executors that need a
+ * field from any upstream (e.g. projectId from video.auto_edit) should use
+ * resolveInputDeep(inputData, "projectId") so the value is found regardless of which
+ * key it lives under.
  */
 
 export function resolveInputDeep<T>(

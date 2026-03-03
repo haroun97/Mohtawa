@@ -19,9 +19,14 @@ import { nodeDefinitions } from '@/store/nodeDefinitions';
 import { WorkflowNodeComponent } from './WorkflowNode';
 import { WorkflowNode } from '@/types/workflow';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { DeletableEdge } from './DeletableEdge';
 
 const nodeTypes = {
   workflowNode: WorkflowNodeComponent,
+};
+
+const edgeTypes = {
+  deletable: DeletableEdge,
 };
 
 function FlowCanvasInner() {
@@ -40,22 +45,31 @@ function FlowCanvasInner() {
 
   const workflow = workflows.find(w => w.id === activeWorkflowId);
 
-  const rfNodes: Node[] = useMemo(() => (workflow?.nodes || []).map(n => ({
-    id: n.id,
-    type: 'workflowNode',
-    position: n.position,
-    data: { ...n.data, isSelected: n.id === selectedNodeId },
-  })), [workflow?.nodes, selectedNodeId]);
+  const rfNodes: Node[] = useMemo(
+    () =>
+      (workflow?.nodes || []).map((n) => ({
+        id: n.id,
+        type: 'workflowNode',
+        position: n.position,
+        data: { ...n.data, isSelected: n.id === selectedNodeId },
+      })),
+    [workflow?.nodes, selectedNodeId],
+  );
 
-  const rfEdges: Edge[] = useMemo(() => (workflow?.edges || []).map(e => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    sourceHandle: e.sourceHandle,
-    targetHandle: e.targetHandle,
-    animated: true,
-    style: { strokeWidth: 2 },
-  })), [workflow?.edges]);
+  const rfEdges: Edge[] = useMemo(
+    () =>
+      (workflow?.edges || []).map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        type: 'deletable',
+        animated: true,
+        style: { strokeWidth: 2 },
+      })),
+    [workflow?.edges],
+  );
 
   const isValidConnection = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return false;
@@ -153,6 +167,7 @@ function FlowCanvasInner() {
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
+        edgeTypes={edgeTypes}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}

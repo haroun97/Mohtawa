@@ -4,7 +4,7 @@
 
 **Date:** February 20, 2026
 **Methodology:** Iterative (phase-based MVP approach)
-**Last updated:** Phase 7a — Overlay editing in editor done; next priority: Desktop optional right panel for tools.
+**Last updated:** Phase 7c — Ideas & Scripts Editor (Notion-like) and Ideas Source (In-app Editor) specified; TipTap, block UX, content model, storage, node integration. Dashboard link added to editor header (done).
 
 ---
 
@@ -16,7 +16,7 @@
 4. [Phase 3 — Workflow Persistence & Execution](#4-phase-3--workflow-persistence--execution)
 5. [Phase 4 — AI & External Integrations](#5-phase-4--ai--external-integrations)
 6. [Phase 5 — Polish & Deploy MVP](#6-phase-5--polish--deploy-mvp)
-7. [Post-MVP Phases](#7-post-mvp-phases) (includes Phase 6b — Voice cloning; Phase 7 — Video edit pipeline; Phase 7a — Instagram-style EDL Editor)
+7. [Post-MVP Phases](#7-post-mvp-phases) (includes Phase 6b — Voice cloning; Phase 7 — Video edit pipeline; Phase 7a — EDL Editor; Phase 7b — Ideas List + Loop; Phase 7c — Ideas & Scripts Editor)
 8. [Data Model](#8-data-model)
 9. [API Routes](#9-api-routes)
 10. [Risk Register](#10-risk-register)
@@ -496,8 +496,8 @@ Backward compatible when EDL has no `color` or music.
 - **Entry:** `EdlEditor.tsx` — loads EDL, resolves play URL, holds save/export logic, keyboard shortcuts; renders `EditorPage`.
 - **Layout:** `EditorPage.tsx` — full-screen; top bar + centered 9:16 preview + timeline + bottom tool bar. Responsive (mobile-first); on desktop same structure, tool controls in bottom sheets.
 - **Top bar** (`EditorTopBar.tsx`): Back (X), title “Edit draft”, resolution badge (e.g. 1080p), save indicator (“Saving…” / “Saved”), **Export** button (replaces “Save & Re-render”).
-- **Preview** (`PreviewPlayer.tsx`): Vertical 9:16 video; live CSS filter for color (saturation/contrast/vibrance); ref for Space play/pause.
-- **Timeline** (`TimelineTrack.tsx`): Thumbnail-style track — clip blocks with label + duration; drag-to-reorder (HTML5 DnD); playhead scrubber; selection by `selectedClipId` (outline/ring). Trim is in **Trim** tool sheet when a clip is selected.
+- **Preview:** `LivePreviewPlayer` — single video element keyed as `preview-video` (no remount on clip change); maps timeline time to active clip and source time; play/pause and timeupdate on same element so play icon hides during playback and playhead stays in sync. Boundary logic switches clip by updating `video.src`/`currentTime`/`play()` and calls `onTimeUpdate(nextClip.startSec)` for a stable cut. Time rounded to 0.05s to reduce jitter. `TimelineTracks` smooths the blue playhead line with RAF interpolation (lerp toward `playheadSec`) and snaps on seek (>0.5s jump). Color filter (saturation/contrast/vibrance) applied via CSS.
+- **Timeline** (`TimelineTracks.tsx`): Thumbnail-style track — clip blocks with label + duration; drag-to-reorder (DnD-kit); playhead scrubber (smoothed); selection by `selectedClipId` (outline/ring). Trim is in **Trim** tool sheet when a clip is selected.
 - **Tool bar** (`ToolBar.tsx`): Bottom, horizontally scrollable icons — **Adjust**, **Audio**, **Captions**, **Trim** (Trim disabled when no clip selected). Tapping a tool opens the corresponding bottom sheet.
 - **Tool sheets** (shadcn `Sheet` side="bottom"): **AdjustSheet** (saturation, contrast, vibrance + Reset), **AudioSheet** (voice volume, music toggle, music volume), **CaptionsSheet** (subtitle style presets per overlay), **TrimSheet** (In/Out sliders for selected clip). Open/close driven by `activeTool` in store.
 - **State:** `edlEditorStore` (Zustand): `selectedClipId`, `activeTool`, `saveStatus`; reset on editor unmount.
@@ -559,8 +559,10 @@ Structure code so that adding a new renderer does not require changing the EDL s
 | 2.5 | ~~**Mobile edit page: clickable + timeline scroll**~~ | ✅ Done: editor portaled to `document.body` from Builder; Inspector sheet closed when opening editor (avoids Radix body `pointer-events: none`); body pointer-events safeguard in EdlEditor; focus on close button on mount (rAF); timeline clips `touch-pan-x` for horizontal scroll; SortableVideoClip mergedRef. |
 | 3 | ~~**Split clip (UI + backend)**~~ | ✅ Done: Split at playhead in ContextualActionBar (video clip + playhead inside); keyboard S; 44px touch targets; EDL on Save; multi-clip supported. |
 | 4 | ~~**Overlay editing in editor**~~ | ✅ Done: Captions sheet edits text, startSec, endSec, style; add/remove overlays; Delete overlay in ContextualActionBar + Delete key; clamping; Text track “Add captions” button when empty opens Captions panel.
+| 4.5 | ~~**Preview & playhead fixes**~~ | ✅ Done: Live preview (single video, no remount at boundaries); play icon/playhead in sync; time rounded to 0.05s + onTimeUpdate at cut; TimelineTracks RAF-smoothed playhead line, snap on seek. |
 | 5 | **Desktop: optional right panel for tools** | On desktop, consider showing active tool controls in a right-side panel instead of (or in addition to) bottom sheet for faster access. |
 | 6 | **Delete selected clip** | If backend supports removing a clip from EDL (reflow startSec), add Delete to tool bar and Del keyboard shortcut. |
+| 7 | **Replace editor with scene-editor-main template** | Plan in §8 (Phase 7a): component mapping, EDL↔template data mapping, wiring, CSS, step-by-step replacement. Template: TopBar, VideoPreview (→ keep LivePreviewPlayer), PlaybackControls, Timeline, BottomToolbar, ClipToolbar, ExportModal, SlipMode. Keep EdlEditor shell, EDL API, live preview, slip/split/trim logic; replace layout and UI with template. |
 
 **Other (unchanged):**
 
@@ -581,6 +583,593 @@ Structure code so that adding a new renderer does not require changing the EDL s
 - **Queue:** Reusing the existing queue with a new job type (e.g. `draft-render`) is simpler than a separate queue; worker can branch on job type. Alternatively a dedicated `draft-render` queue keeps workflow execution and heavy FFmpeg jobs separated (recommended if same Redis is used for both).
 - **Frontend:** Phase 1 UI rework delivers a mobile-first, tool-driven editor: top bar with Export and save indicator, centered 9:16 preview, thumbnail-style timeline with playhead and drag-to-reorder, bottom tool bar (Adjust, Audio, Captions, Trim), and bottom sheets for each tool. Same API and EDL contract; no backend changes.
 - **Phase 2 readiness:** Abstracting the renderer behind an interface (e.g. `VideoRenderer`) in the service layer makes Remotion or other backends a drop-in later without changing API or EDL contract.
+
+---
+
+#### 8. Replace video editor with scene-editor-main template (plan)
+
+**Objective:** Replace the current EDL editor UI with the new template from `frontend/scene-editor-main`, while keeping Mohtawa’s EDL data model, API (projects, EDL, render-draft), and existing behaviour (live preview, slip, split, trim, overlays). Only the planning is below; no implementation.
+
+---
+
+##### 8.1 Template overview (`frontend/scene-editor-main`)
+
+- **Stack:** Vite, React, TypeScript, shadcn-ui, Tailwind. No React Query in the template’s editor flow; no DnD library (template timeline is static layout + trim drag).
+- **Entry:** `src/pages/Index.tsx` — single page with local state only (no projectId, no API).
+- **Layout:** Fixed full-screen: TopBar → VideoPreview → PlaybackControls → Timeline → (ClipToolbar **or** BottomToolbar). When a clip is selected, ClipToolbar is shown; otherwise BottomToolbar. SlipMode and ExportModal are full-screen/modal overlays.
+- **Template state:** `clips` (array of `{ id, type: 'video'|'text'|'audio', start, duration, label?, selected }`), `textOverlays` (`{ id, text, x, y, selected }`), `currentTime`, `isPlaying`, `activeTool`, `selectedClipId`, `showExport`, `showSlipMode`, `exportSettings`.
+- **Template components:**
+  - **TopBar:** Close (X), project name dropdown, resolution badge (click → export), Export (Upload) button.
+  - **VideoPreview:** 9:16 area, simulated gradient “video”, play overlay, text overlays (click to select). No real video; no `clipUrl`/EDL.
+  - **PlaybackControls:** Play/pause, current time / duration, undo/redo.
+  - **Timeline:** Single scrollable area; time ruler; three rows (video, text, audio) of clips; playhead line; clip trim by drag (left/right handles on selected clip); click timeline to seek. Clip shape: `start`, `duration` (template uses no `inSec`/`outSec`/`startSec`).
+  - **BottomToolbar:** Horizontal scroll of tools (Audio, Text, Voice, Links, Captions, Filters, Adjust, Overlay, Sound FX, Cutout, Sticker). Toggle active tool; no bottom sheets in template.
+  - **ClipToolbar:** When a clip is selected: primary row (Split, Edit, TTS, Copy, Delete, Duplicate), “Edit” toggles to second row (Slip, Extract, Voice FX, Reverse, Speed, Replace). Slip opens SlipMode.
+  - **ExportModal:** Resolution (HD/2K/4K), Frame rate (24/30/60), Colour (SDR/HDR). “Export Video” button. No API call.
+  - **SlipMode:** Full-screen: preview (simulated), filmstrip (24 fake frames), drag to change “offset”; Cancel / Confirm. No real clip URL or `setClipSlipInAbsolute`.
+
+---
+
+##### 8.2 Current Mohtawa editor overview
+
+- **Entry:** `EdlEditor.tsx` — receives `projectId`, `initialDraftVideoUrl`, `onClose`, `onSaved`. Loads EDL via `projectsApi.getEdl(projectId)`, resolves clip URLs (presigned), holds `edl`, `dirty`, save/export state, undo/redo stacks. Renders `EditorPage` with many props.
+- **Layout:** `EditorPage.tsx` — EditorTopBar; main area (LivePreviewPlayer + TimelineTracks); optional desktop right panel (tool content); ContextualActionBar (clip/overlay actions); mobile: bottom sheets (Adjust, Audio, Captions, Trim). SlipModeOverlay when slip active.
+- **State:** EDL from API (`edl.timeline`, `edl.overlays`, `edl.audio`, `edl.color`, `edl.output`). `edlEditorStore`: `selectedBlock`, `activeTool`, `slipMode`, `slipClipId`, `slipOriginalInSec`, `saveStatus`. Local: `playheadSec`, `videoDuration`, drag state for timeline.
+- **Key components:**
+  - **EditorTopBar:** Close, undo/redo, project name, resolution (from EDL), Export (opens ExportModal), save indicator, loading/error.
+  - **LivePreviewPlayer:** Real video; timeline → clip mapping; single video element; play/pause, timeupdate → playhead; boundary switch; color filter; text overlays from EDL.
+  - **TimelineTracks:** DnD-kit sortable video track; separate tracks for Adjust, Text, Audio, Video; thumbnails via `VideoThumbnailStrip` and `resolvedClipUrls`; playhead (smoothed); trim via TrimSheet (not inline drag in timeline); reorder, select clip, seek.
+  - **ToolBar:** Adjust, Audio, Captions, Trim (Split in bar is disabled; Delete optional). Opens sheets or right panel.
+  - **ContextualActionBar:** Split, Delete clip, Delete overlay, Duplicate, Slip, etc., driven by `selectedBlock` and store.
+  - **Sheets:** AdjustSheet, AudioSheet, CaptionsSheet, TrimSheet (mobile bottom sheets; desktop right panel content).
+  - **SlipModeOverlay:** Full-screen slip with real filmstrip (VideoThumbnailStrip), real clip URL, `setClipSlipInAbsolute`, Cancel/Confirm.
+  - **ExportModal / ExportScreen:** Resolution, FPS, export trigger; Mohtawa wires to POST edl/update + render-draft + polling.
+
+---
+
+##### 8.3 Component mapping: what to replace with what
+
+| Template component   | Current Mohtawa component | Action |
+|---------------------|----------------------------|--------|
+| **Index (page)**    | **EdlEditor** (wrapper) + **EditorPage** (layout) | Replace **EditorPage** layout and inner structure with template layout (TopBar → Preview → PlaybackControls → Timeline → ClipToolbar or BottomToolbar). Keep **EdlEditor** as shell: load EDL, resolve URLs, save/export, undo/redo, pass props into the new page component. |
+| **TopBar**          | **EditorTopBar**          | Replace with template **TopBar** UI (X, project name, resolution, Export). Wire: `onClose`, `onExport`/`onResolutionClick`, project name from props; resolution from EDL or export settings; optionally keep undo/redo in bar or move to PlaybackControls. Add save indicator and export progress/error if desired (template has none). |
+| **VideoPreview**    | **LivePreviewPlayer**     | **Do not** use template VideoPreview (fake content). Keep **LivePreviewPlayer** but optionally restyle its container to match template (e.g. same 9:16 container class, play overlay style). Template’s safe-area and overlay click (select text) can be mirrored. |
+| **PlaybackControls**| (none; play in preview)   | **Add** template **PlaybackControls** between preview and timeline: play/pause, current time / total duration, undo/redo. Wire: `isPlaying`/`currentTime`/`duration` from EdlEditor/EditorPage state; `onTogglePlay` toggles video; `onUndo`/`onRedo` from EdlEditor. |
+| **Timeline**        | **TimelineTracks**        | Two options: (A) Replace **TimelineTracks** with template **Timeline** and rewire: map EDL timeline + overlays + audio to template `clips` shape; implement seek, trim (inline drag), and reorder (add DnD if needed). (B) Keep **TimelineTracks** but restyle to match template (ruler, track rows, playhead, clip blocks). Prefer (A) if aiming for full template look/UX; (B) if preserving existing DnD and multi-track structure. |
+| **BottomToolbar**   | **ToolBar**               | Replace **ToolBar** with template **BottomToolbar**: same tool list or subset (e.g. Audio, Text, Captions, Adjust, Trim, Overlay). Wire `activeToolId` / `onToolSelect` to `edlEditorStore.activeTool` and open existing sheets (or template-style panels) for Adjust, Audio, Captions, Trim. |
+| **ClipToolbar**     | **ContextualActionBar**   | Replace **ContextualActionBar** with template **ClipToolbar** when a video clip is selected: primary row (Split, Edit, Copy, Delete, Duplicate, etc.) and “Edit” row (Slip, Extract, Voice FX, Reverse, Speed, Replace). Wire each action to existing handlers (split, delete, duplicate, slip). “Edit” can open Trim sheet; Slip opens SlipMode. |
+| **ExportModal**     | **ExportModal** + **ExportScreen** | Use template **ExportModal** layout and styling (resolution, frame rate, colour segments). Wire settings to Mohtawa export options (resolution, FPS); “Export Video” triggers existing export flow (edl/update + render-draft). Optionally keep ExportScreen for progress/result. |
+| **SlipMode**        | **SlipModeOverlay**       | Replace **SlipModeOverlay** UI with template **SlipMode** layout (preview on top, filmstrip, Cancel/Confirm). Keep Mohtawa slip logic: real clip, `setClipSlipInAbsolute`, real filmstrip (e.g. **Filmstrip** from current overlay). So: template SlipMode shell + current filmstrip and confirm/cancel behaviour. |
+
+---
+
+##### 8.4 Data model mapping (EDL ↔ template)
+
+- **Template clip:** `{ id, type: 'video'|'text'|'audio', start, duration, label?, selected }`. One flat list; `start` = timeline start; `duration` = length.
+- **Mohtawa EdlTimelineClip:** `{ id?, clipUrl, inSec, outSec, startSec }`. `startSec` = timeline start; duration = `outSec - inSec`.
+- **Mapping (timeline → template):** For each `EdlTimelineClip`: `id`, `type: 'video'`, `start: clip.startSec`, `duration: clip.outSec - clip.inSec`, `selected` from store. Template has no `clipUrl`; use only for display/trim. When template reports trim (newStart, newDuration), map back: `startSec = newStart`, `inSec` unchanged for “slip” semantics or derive from trim; `outSec = inSec + newDuration` (or reflow inSec/outSec by backend contract).
+- **Template text clip:** `type: 'text'` with `start`, `duration`, `label`. Mohtawa: **overlays** are separate (`startSec`, `endSec`, `text`, `stylePreset`). Map overlays to template “text” clips for one unified timeline row, or keep separate Text track and map overlay times to a synthetic “text” clip list for template Timeline.
+- **Template textOverlays (preview):** `{ id, text, x, y, selected }` — position in % for overlay on preview. Mohtawa overlays have `startSec`/`endSec` and optional `position` (top/center/bottom). Derive `x`/`y` from `position` or store; selection from `selectedBlock` when type text.
+- **Audio:** Template has `type: 'audio'` clips. Mohtawa has a single voiceover + optional music (EDL audio). Either one “audio” clip representing full voiceover or map to a single clip; music can be UI-only in Audio sheet.
+
+---
+
+##### 8.5 Wiring summary
+
+1. **Entry:** **EdlEditor** stays. It loads EDL, resolves URLs, manages dirty/save, export (edl/update + render-draft), undo/redo. It renders the new “EditorPage” (template layout) and passes: `edl`, `resolvedClipUrls`, `playheadSec`, `setPlayheadSec`, `playing`, `setPlaying`, `onEdlChange`, `reorderClips`, `setClipTrim`, `setClipSlipInAbsolute`, `onClose`, `onExport`, `onUndo`, `onRedo`, `canUndo`, `canRedo`, etc.
+2. **State:** Keep EDL as source of truth. Derive template-friendly structures (e.g. `clips` for timeline) in the new page or in a small adapter. Selection: keep `edlEditorStore.selectedBlock` / `selectedClipId`; template expects `selectedClipId` and per-clip `selected` — sync from store.
+3. **Preview:** Keep **LivePreviewPlayer**; feed `edl.timeline`, `resolvedClipUrls`, `playheadSec`, `onTimeUpdate`, `edl.color`, `edl.overlays`. Play/pause can be driven by a local `playing` state or ref to video.
+4. **Timeline:** If using template **Timeline**: on mount and when EDL changes, compute `clips` from `edl.timeline` (and overlays/audio if unified). `onTimeChange` → `setPlayheadSec`. `onClipTrim` → `setClipTrim` (map back to inSec/outSec/startSec). `onSelectClip` → set selected clip in store. Reorder: if template Timeline has no DnD, add it (e.g. DnD-kit) and call `reorderClips(from, to)`.
+5. **ClipToolbar:** When `selectedClipId` is set and clip is video, show ClipToolbar. Split → `onSplitClipAtPlayhead`; Delete → `onDeleteClip`; Duplicate → `onDuplicateClip`; Slip → set slip mode in store and show SlipMode (with Mohtawa slip logic).
+6. **BottomToolbar:** Tools open existing sheets (Adjust, Audio, Captions, Trim). Optionally restrict to template’s tool list and style.
+7. **Export:** Template ExportModal opens from TopBar; on confirm, call existing `onExport(options)` from EdlEditor.
+8. **SlipMode:** When slip is active, render template **SlipMode** layout but use current **SlipModeOverlay** content (filmstrip with real frames, `setClipSlipInAbsolute`, onConfirm/onCancel).
+
+---
+
+##### 8.6 CSS / theme
+
+- Template uses `--editor-bg`, `--editor-surface`, `--editor-surface-hover`, `--editor-preview-bg`, `--editor-timeline-bg`, `--editor-toolbar-bg`, `--selection`, `--playhead`, `--text-layer`, `--audio-waveform`, and utilities: `.editor-glass-hover`, `.clip-selected`, `.toolbar-icon`, `.toolbar-icon-active`, `.no-scrollbar`, `.smooth-scroll`, `.ios-segmented`, `.safe-area-guide`, and keyframes `fade-in`, `slide-up`, `scale-in`.
+- **Action:** Copy template’s editor CSS variables and utility classes from `scene-editor-main/src/index.css` into Mohtawa’s global CSS. In `tailwind.config.ts`, extend `theme.colors` with `editor.*`, `selection`, `playhead`, `text-layer`, `audio-waveform` if not present, and add the same keyframes/animations so that template components look correct when pasted into Mohtawa.
+
+---
+
+##### 8.7 Step-by-step replacement plan (implementation order)
+
+1. **CSS/theme:** Add template editor tokens and utilities to Mohtawa `index.css` and Tailwind config (no component changes yet).
+2. **TopBar:** Introduce template **TopBar** component under `frontend/src/components/builder/editor/`, wired to `onClose`, project name, resolution, `onExport`. Optionally merge in undo/redo and save indicator from current EditorTopBar. Use it in EditorPage instead of EditorTopBar.
+3. **PlaybackControls:** Add template **PlaybackControls**; wire play/pause (to LivePreviewPlayer or ref), currentTime/duration from state, undo/redo from EdlEditor.
+4. **BottomToolbar:** Add template **BottomToolbar**; wire tools to `activeTool` and existing sheets. Replace current ToolBar with it.
+5. **ClipToolbar:** Add template **ClipToolbar**; wire Split, Delete, Duplicate, Slip, etc., to existing handlers. Show when a video clip is selected; hide when none. Replace or hide ContextualActionBar when clip is selected.
+6. **Timeline:** (A) Integrate template **Timeline** and implement EDL ↔ clips adapter, seek, trim callback → setClipTrim, reorder (with DnD if added). Or (B) restyle **TimelineTracks** to match template (playhead, track styling, clip blocks). Remove or refactor TimelineTracks accordingly.
+7. **Preview:** Keep LivePreviewPlayer; optionally wrap in template-style container (same aspect ratio and class names as template VideoPreview).
+8. **ExportModal:** Replace or restyle current ExportModal with template ExportModal layout; keep existing export API and progress/result flow.
+9. **SlipMode:** Replace SlipModeOverlay layout with template SlipMode (preview + filmstrip + footer); keep Filmstrip and `setClipSlipInAbsolute`/confirm/cancel logic.
+10. **EditorPage layout:** Assemble: TopBar → LivePreviewPlayer → PlaybackControls → Timeline (or TimelineTracks) → ClipToolbar or BottomToolbar. Remove or relocate desktop right panel and mobile sheets as needed (tools still open sheets; layout follows template).
+11. **Cleanup:** Remove or deprecate old EditorTopBar, ToolBar, ContextualActionBar if fully replaced. Ensure EdlEditor still receives projectId and onClose/onSaved; ensure export and save flows unchanged.
+12. **Testing:** E2E or manual: open editor from Builder, load EDL, play, seek, trim, reorder, split, slip, change tools, export; verify EDL and draft URL update correctly.
+
+---
+
+##### 8.8 What to keep from current (do not drop)
+
+- **EdlEditor:** ProjectId, load EDL, resolve URLs, dirty/save, export (POST edl/update + render-draft), undo/redo stacks.
+- **LivePreviewPlayer:** Real video, timeline→clip mapping, single video element, boundary switch, color filter, overlays, playhead sync.
+- **EDL types and API:** `EdlTimelineClip`, `EdlTextOverlay`, EDL, `projectsApi.getEdl`/`updateEdl`, render-draft.
+- **Slip logic:** `setClipSlipInAbsolute`, slip store state, real filmstrip (e.g. Filmstrip component) and clamp.
+- **Split/trim/delete/duplicate:** Existing handlers and backend contract (split at playhead, reflow startSec, etc.).
+- **Sheets:** AdjustSheet, AudioSheet, CaptionsSheet, TrimSheet (content and EDL wiring); only their trigger (toolbar) and layout change.
+
+---
+
+##### 8.9 Audit: what is still not replaced (template vs current)
+
+Comparison after the scene-editor template integration. **Do not implement** from this list unless product decides to.
+
+| Area | Template | Current Mohtawa | Still not replaced / difference |
+|------|----------|------------------|----------------------------------|
+| **TopBar** | Close (X), project name + ChevronDown, resolution badge, **Upload** icon for Export. No undo/redo. | EditorTopBar: same layout with **Download** icon (and Loader2 when exporting). Undo/redo moved to PlaybackControls. Error message below bar. | **Export button icon:** template uses Upload; we use Download. Optional: align icon to Upload if desired. |
+| **Preview (VideoPreview vs LivePreviewPlayer)** | 9:16 container, **safe-area-guide** (dashed border inset), **play overlay** = w-14 h-14 rounded-full bg-foreground/20 backdrop-blur-md, Play size 24. **Clickable text overlays** on preview (x/y %, clip-selected style, onSelectText(id)). | LivePreviewPlayer in template-style 9:16 container. Real video, color filter, overlays rendered by position (top/center/bottom); **no safe-area guide**; play overlay = bg-black/50 p-4, Play h-10 w-10. Overlays are **not clickable** (pointer-events-none layout). | **Safe-area guide** in preview. **Play overlay styling** (template: bg-foreground/20 backdrop-blur, w-14 h-14). **Click-to-select text overlays on preview** (template: click overlay → onSelectText; we select overlays via timeline/Captions sheet only). |
+| **PlaybackControls** | Play/pause, time/duration, undo/redo. | Same; wired. | — Replaced. |
+| **Timeline** | **Single component:** 3 rows (video, text, audio). **Inline trim** by dragging left/right handles on selected clip. **No DnD reorder.** Time ruler: **half-second ticks** (text-[9px], small lines), ml-2. **Duration badge** above clip when selected or trimming (e.g. "2.5s", bg-selection or bg-primary). **Dimmed overlay + ring-selection/20** when trimming. Clip styles: video = bg-editor-surface, text = bg-text-layer/30, audio = bg-audio-waveform/10; clip-selected / hover:ring-foreground/20. **Thumbnails** = gradient strips (no real frames); **waveform** = bar strip for audio. | **TimelineTracks:** 4 rows (Adjust, Text, Audio, Video). **Trim via Trim sheet** (no inline trim on timeline). **DnD reorder** (dnd-kit) on video track. Real **VideoThumbnailStrip**. Playhead + circle knob and editor styling applied. No duration badge above clips. No dimmed trim state on timeline. | **Timeline component:** we kept TimelineTracks, not the template Timeline. **Not replaced:** template’s **inline trim-by-drag** on timeline, template’s **time ruler** (half-second ticks, ruler layout), **duration label** above selected/trimming clip, **trim dimming + ring** on timeline, template’s **three-track only** (no Adjust row) and **track visuals** (text-layer/audio-waveform background classes for text/audio clips). |
+| **BottomToolbar** | **11 tools:** Audio, Text, Voice, Links, Captions, Filters, Adjust, Overlay, Sound FX, Cutout, Sticker. | **4 tools:** Audio, Captions, Adjust, Trim. | **Tool set:** template has 11 tools; we use 4. Not replaced (by design): Text, Voice, Links, Filters, Overlay, Sound FX, Cutout, Sticker — unless product adds them. |
+| **ClipToolbar** | Primary: Split, Edit, TTS, Copy, Delete, Duplicate. Edit row: Slip, Extract, Voice FX, Reverse, Speed, Replace. Edit toggles second row; only Slip + Edit wired in template. | Same structure; Split, Edit, Slip, Delete, Duplicate wired. TTS/Copy/Extract/Voice FX/Reverse/Speed/Replace present but mostly disabled. | **TTS, Copy** (and edit-row actions) not wired or placeholder. Optional: wire Copy or hide unused. |
+| **ExportModal** | Resolution, Frame rate, Colour segments; single "Export Video" button; **no progress**. | Restyled to template layout; **progress** and exporting state kept. | — Replaced (look); behaviour intentionally richer (progress). |
+| **SlipMode** | Simulated preview (gradient); **24 fake filmstrip frames** (gradient blocks); drag filmstrip to change offset; instruction; Cancel/Confirm (icons only). | SlipModeOverlay: **real video** preview, **real Filmstrip** (thumbnails), real slip logic; template layout/styling applied. | **Filmstrip:** template = fake gradient frames; we use real Filmstrip. No change needed. Optional: template’s **drag-to-slide** filmstrip UX could be compared to our Filmstrip UX. |
+| **Desktop right panel** | Template has **no** right panel; tools only toggle toolbar. | **Aside** with Adjust/Audio/Captions/Trim sheet content when tool active. | We have **more** than template (tool content in panel). Not “replaced” — we kept it. Optional: hide panel to match template (tools would only open mobile sheets). |
+| **Mobile sheets** | Template has **no** bottom sheets. | AdjustSheet, AudioSheet, CaptionsSheet, TrimSheet. | We have **more** than template. Optional: remove sheets to match template (would lose tool controls on mobile unless toolbar opens something else). |
+| **ContextualActionBar** | When text is selected, template still shows **BottomToolbar** (no separate bar). | When **text overlay** selected we show **ContextualActionBar** (e.g. delete overlay). | **Overlay selection UX:** template doesn’t have a dedicated overlay bar; we do. Optional: show BottomToolbar for overlay and move overlay actions into it or a sheet. |
+| **Old components** | — | ToolBar.tsx, ContextualActionBar (still used for overlay). | **ToolBar** is replaced by BottomToolbar. **ContextualActionBar** still used when an overlay is selected; not removed. |
+
+**Summary — still not replaced (optional or by design):**
+
+1. **Preview:** Safe-area guide; template play overlay style; clickable text overlays on preview.
+2. **Timeline:** Template’s Timeline component itself (we use TimelineTracks); inline trim-by-drag on timeline; duration badge above clip; time ruler with half-second ticks; trim dimming/ring; template track visuals for text/audio (text-layer, audio-waveform).
+3. **TopBar:** Export icon (Upload vs Download).
+4. **BottomToolbar:** Extra tools (Text, Voice, Links, Filters, Overlay, Sound FX, Cutout, Sticker) — add only if product needs them.
+5. **ClipToolbar:** TTS, Copy (and edit-row actions) — wire or hide.
+6. **Desktop panel / mobile sheets:** Template has neither; we kept both. Remove only if targeting template parity.
+7. **ContextualActionBar:** Still used for overlay selection; template has no equivalent.
+
+---
+
+### Phase 7b — Ideas List + Loop (Option B)
+
+**Goal:** One workflow can generate many videos from ideas stored in Google Docs or Notion; for each idea the user can review/edit the script before continuing.
+
+**Status:** Planning only (no implementation yet).
+
+---
+
+#### 7b.1 New nodes and schemas
+
+**1) Ideas Source node (`ideas.source`)**
+
+| | |
+|--|--|
+| **Provider** | Manual list, CSV, **In-app Editor** (Phase 7c), Notion, Google Docs. **MVP order:** Manual + CSV first; then In-app Editor (Phase 7c); then Notion; then Google Docs. |
+| **Output** | `{ items: Array<{ id, title, idea, meta? }> }` (standard); for In-app Editor: `{ items: Array<{ id, title, ideaText, scriptText, rawBlocks, meta }> }` |
+
+**2) Split into Items node (`text.split_items`)**
+
+| | |
+|--|--|
+| **Input** | Raw text or blocks |
+| **Config** | `splitMode: "headings" \| "bullets" \| "separator"` |
+| **Output** | `{ items: Array<{ id, title, idea }> }` |
+
+**3) For Each node (`flow.for_each`)**
+
+| | |
+|--|--|
+| **Input** | `items[]` from upstream |
+| **Behavior** | Runs downstream nodes once per item. Provides per-iteration context: `$item` (current item), `$index`, `$total`. |
+| **Supports** | Sequential execution (MVP); stop/pause on manual review step; collect results into `{ results: [] }` at the end. |
+
+**4) Write Script node (`script.write` — create or upgrade existing)**
+
+| | |
+|--|--|
+| **When inside For Each** | Pre-fill editor with `title = $item.title`, `prompt seed = $item.idea`. |
+| **Modes** | (A) AI generate draft script (optional toggle); (B) Manual script editor (user edits and clicks “Continue”). |
+| **Output** | `{ title, idea, script, language?, style?, captions?: boolean }` |
+
+**Deliverable (schemas):** Node definitions + Zod schemas for `ideas.source`, `text.split_items`, `flow.for_each`, `script.write` (or upgrade existing).
+
+---
+
+#### 7b.2 Integrations
+
+**A) Notion Ideas Source (Phase 1 integration)**
+
+- OAuth connection or API key (token) support.
+- **Notion Database mode (recommended):**
+  - User selects `databaseId`.
+  - Optional filter: e.g. Status == "Ready".
+  - Map properties: title → `item.title`, idea text → `item.idea` (use title if no idea field), id → `item.id`.
+- **Notion Page mode:**
+  - Read blocks from a `pageId`.
+  - Convert headings/bullets into a single `rawText` output; feed into Split node.
+
+**B) Google Docs Ideas Source (Phase 2 integration)**
+
+- OAuth Google connection.
+- Read doc content as plain text.
+- Splitting by headings or separators via Split node.
+- **Stub with TODOs** if time is limited.
+
+**MVP priority:** (1) Manual list + CSV upload; (2) Notion database; (3) Google Docs.
+
+---
+
+#### 7b.3 Workflow runtime / engine behavior
+
+- **For Each:** Execute child nodes in order for each item.
+- **Iteration context** passed into node execution: `context.item`, `context.index`, `context.total`.
+- **Manual review gating:** If Write Script is in manual mode, workflow run pauses until user clicks “Continue”. Store paused run state so user can resume.
+- **Outputs:** For Each returns aggregated results: `{ results: [{ itemId, outputsByNodeId, finalVideoUrl? }] }`.
+
+---
+
+#### 7b.4 UI requirements
+
+**Ideas Source node UI**
+
+- Dropdown provider: Manual / CSV / Notion / Google Docs.
+- **Manual mode:** Multiline textarea (each line = one idea) OR JSON array editor.
+- **CSV mode:** File upload + select column for idea.
+- **Notion mode:** Connect button + database/page selector + optional status filter.
+- **Google mode:** Connect button + doc selector.
+
+**Split node UI**
+
+- `splitMode` dropdown: headings (lines starting with # or Markdown headings), bullets (- or •), separator (---).
+- Output preview: show first 3 items.
+
+**For Each node UI**
+
+- “Sequential / Parallel (coming soon)” — parallel disabled for MVP.
+- Show progress (e.g. 3/12).
+- Ability to stop/cancel run.
+
+**Write Script node UI**
+
+- Rich text editor or simple textarea (MVP).
+- “Generate with AI” toggle.
+- If AI enabled: generate draft then allow edits.
+- Buttons: “Continue”, “Regenerate”, “Skip”.
+- Show current idea title at top.
+
+---
+
+#### 7b.5 Voice node: getting text from Ideas Source / current item
+
+**Goal:** The Voice (TTS) node must speak the right text for each idea when used inside a For Each loop. That text can come from an upstream node (e.g. Write Script) or directly from the current item.
+
+**Ways the Voice node gets text**
+
+1. **From upstream connection (recommended when using Write Script)**  
+   - Flow: Ideas Source → For Each → Write Script → **Voice** → Preview → …  
+   - Write Script outputs `{ script, title, idea, … }`.  
+   - Voice node has an **input** that accepts the script from the connected upstream node.  
+   - So: connect the **Write Script** output to the **Voice** node's "text" or "script" input; the execution engine passes the upstream node's `script` (or chosen field) into the Voice node's input for that iteration.
+
+2. **From current item when there is no Write Script**  
+   - Flow: Ideas Source → For Each → **Voice** → Preview → …  
+   - No Write Script in the loop; the text to speak is the idea or script text from the Ideas Source item.  
+   - The execution engine, when running the Voice node inside For Each, injects the **current item** into the node's input (e.g. `context.item` or `inputData` from For Each).  
+   - Voice node **config** (or input resolution) must define which field to use as the text to speak, e.g.:  
+     - `$item.scriptText` (when Ideas Source is In-app Editor and sections include script content)  
+     - `$item.idea` (short idea / one-liner)  
+     - Or a single combined/fallback rule: e.g. use `scriptText` if present, else `idea`.
+
+3. **Manual override (optional)**  
+   - Config field: "Text to speak" as a static string or left empty when using upstream/current item.  
+  - When empty and inside For Each: use current item's script/idea as above.  
+  - When set: use that string (ignores upstream/item for that run).
+
+---
+
+#### 7b.6 Preview Loop Outputs node (`preview.loop_outputs`)
+
+**Goal:** After a For Each loop generates one voiceover per item, provide a single utility node that aggregates those per-item results into a playlist-friendly shape so the UI can easily show “all clips in this loop”.
+
+**Behavior / contract**
+
+- **Input (from `flow.for_each`):**  
+  `{ results: [{ itemId, outputsByNodeId, finalVideoUrl? }], items?: IdeaItem[] }` where `outputsByNodeId` contains downstream node outputs (e.g. Voice TTS with `audioUrl`).
+- **Executor behavior:**  
+  - Scan `results[]`; for each entry, look through `outputsByNodeId` values.  
+  - If any downstream output has an `audioUrl`, emit an item with:  
+    - `id = itemId`  
+    - `title =` item title from `items[]` (fall back to idea text or id)  
+    - `audioUrl` from the voice node’s output.  
+  - Output shape: `{ items: Array<{ id: string; title?: string; audioUrl?: string }> }`.
+
+**Frontend behavior**
+
+- New utility node definition:  
+  - Type: `preview.loop_outputs`.  
+  - Category: Utilities.  
+  - Inputs: `input` (from For Each).  
+  - Outputs: `output`.  
+  - Config: none (pure display/aggregation).
+- Run Logs:  
+  - For steps whose output matches `{ items: [...] }`, render a **Loop items** section listing each item with its title and an audio player bound to its `audioUrl`.  
+  - This gives the user a quick playlist of all loop-generated clips without drilling into each iteration.
+
+**How the Voice node should look (UI / behavior)**
+
+- **Input handle(s):**  
+  - One optional input: "Script / text" (or "Text to speak"). When connected (e.g. from Write Script), the Voice node uses that node's output (e.g. `script`) as the text for TTS.  
+  - When not connected and the node runs inside For Each: engine provides the current item; Voice node uses `$item.scriptText` or `$item.idea` per config or default.
+
+- **Config (existing):**  
+  - Voice profile (e.g. "My Voice (Clone)").  
+  - Format (e.g. mp3).  
+  - Optional: **"Text source"** when inside a loop: "From upstream" | "Current item (script)" | "Current item (idea)" | "Manual". If "Manual", show a textarea for static text.
+
+- **Execution contract:**  
+  - Backend Voice executor receives `inputData` that includes either:  
+    - the upstream node's output (e.g. `script` from Write Script), or  
+    - the current item (e.g. `_item` or `context.item`) when Voice is downstream of For Each and "text" is not connected.  
+  - Executor then picks the string to synthesize from config + input (upstream script vs `item.scriptText` vs `item.idea`).
+
+**Summary**
+
+- **With Write Script:** Voice gets text by **connection**: connect Write Script → Voice and use Write Script's `script` output.  
+- **Without Write Script:** Voice gets text from **current item**: engine passes `$item` into Voice; Voice uses `$item.scriptText` or `$item.idea` (config or default).  
+- Voice node UI: optional "text" input handle + config (voice profile, format, optional "Text source" in loops).
+
+---
+
+#### 7b.6 Deliverables and implementation order
+
+1. **Node definitions + Zod schemas:** `ideas.source`, `text.split_items`, `flow.for_each`, `script.write` (or upgrade).
+2. **Backend execution engine:** Loop context (`context.item`, `context.index`, `context.total`); pause/resume for manual review.
+3. **Frontend:** Node UIs and wiring for Ideas Source (Manual + CSV), Split, For Each, Write Script.
+4. **Example workflow JSON:** Ideas Source → Split → For Each → Write Script → Voice → Auto Edit → Review → Render → Publish.
+5. **Tests:** Split parsing; for_each iteration; pause/resume.
+
+**Implementation order:** Start with Manual + CSV Ideas Source, Split node, and For Each sequential loop with context passing. Then Notion database integration. Leave Google Docs stubbed with TODOs if time is limited.
+
+---
+
+### Phase 7c — Ideas & Scripts Editor (Notion-like) + Ideas Source (In-app Editor)
+
+**Goal:** Build an in-app Notion-style editor for video ideas and scripts, with a real link to the workflow: the Ideas Source node can read a selected document and output items (split by headings or divider). Do not copy Notion branding; replicate interaction patterns and cleanliness.
+
+**Status:** Planning only (no implementation yet).
+
+---
+
+#### 7c.1 Editor UX (Notion-like)
+
+**Page and layout**
+
+- **Route/page:** “Ideas & Scripts” at `/editor`.
+- **Layout:** Clean minimal; centered content column (max width ~760px).
+- **Left sidebar (collapsible):** “All Docs”, “Ideas & Scripts” (current), “Templates”, “Trash”.
+- **Top bar:** Editable document title; “Saved” indicator (auto-save); **Dashboard** link (back to main app); optional Export / Share (stubbed). — *Done: Dashboard button with icon in header.*
+
+**Editor behavior**
+
+- **Block-based editing:** Each paragraph is a block.
+- **Slash command:** “/” opens command menu:
+  - /heading1, /heading2, /heading3
+  - /bulleted list, /numbered list
+  - /divider, /quote, /callout, /code, /toggle (collapsible)
+- **Enter** creates a new block; **Backspace** on empty block merges with previous.
+- **Drag handle** on left of block to reorder (dnd-kit).
+- **Hover:** Block controls (drag handle + “+” insert).
+- **Selection + formatting toolbar:** Bold, italic, underline, strike, link, inline code.
+- **Paste:** Preserve line breaks and convert into blocks.
+
+**Style**
+
+- Dark mode (default); very subtle borders, soft shadows, rounded corners.
+- Typography: clear, readable, Notion-like spacing.
+- Animations: subtle (e.g. Framer Motion), no heavy transitions.
+
+---
+
+#### 7c.2 Content model (ideas linked to workflow)
+
+Inside the document, each **video idea** is a “section” with a consistent structure:
+
+- **Heading (H2)** = Idea title.
+- Short **“Idea”** paragraph (1–2 lines).
+- **“Script”** block (multi-paragraph).
+- Optional **metadata callout** (Language, Style, Duration, Hashtags).
+
+Example:
+
+```text
+## Why Tunisia is underrated
+Idea: 20–30 sec documentary reel about hidden coastal towns.
+Script:
+[paragraphs...]
+Meta: lang=ar, style=documentary, duration=30
+```
+
+Two ways to mark/split ideas:
+
+- **A) Split by headings (H2 sections).**
+- **B) Split by divider (---).**
+
+---
+
+#### 7c.3 Ideas Source (In-app Editor) integration
+
+**Workflow node: ideas.source — provider “In-app Editor”**
+
+- **Node UI:**
+  - Select a document from the Ideas & Scripts editor (dropdown).
+  - Choose split mode: **by headings (H2)** or **by divider (---)**.
+  - Output preview: first 3 items.
+
+**Implementation**
+
+- Store editor content as **JSON (blocks array)** in DB (per document, per user).
+- Ideas Source node reads the selected document’s JSON and converts blocks to `items[]` using the chosen split mode.
+
+**Node output**
+
+```json
+{
+  "items": [
+    {
+      "id": "string",
+      "title": "string",
+      "ideaText": "string",
+      "scriptText": "string",
+      "rawBlocks": [],
+      "meta": {}
+    }
+  ]
+}
+```
+
+---
+
+#### 7c.4 Editor features (MVP vs phase 2)
+
+**MVP must include**
+
+- Headings (H1/H2/H3), paragraphs.
+- Bulleted + numbered lists, divider, callout (for meta).
+- Drag to reorder blocks.
+- Autosave (debounced 500 ms) with “Saved” / “Saving…” indicator.
+- Search within doc (Cmd/Ctrl+F can be basic).
+- Mobile-responsive layout.
+
+**Nice-to-have (phase 2)**
+
+- Toggle blocks, inline comments, templates, multi-doc support (see §7c.8).
+
+---
+
+#### 7c.5 Tech stack recommendation
+
+Use a battle-tested editor framework (do not build from scratch). **Recommended:** **TipTap (ProseMirror)**. Alternatives: Lexical (Meta), Slate. Implement custom theme and block UI to look Notion-like. TypeScript + Zod throughout.
+
+---
+
+#### 7c.6 Deliverables
+
+- New route/page: `/editor` (Ideas & Scripts).
+- Sidebar + doc list UI (docs can be stubbed with local storage initially; DB later).
+- Editor component with block rendering + slash commands (TipTap or chosen framework).
+- Storage layer for document JSON (local-first or DB when ready).
+- Ideas Source workflow node: provider “In-app Editor”; select doc, split mode (headings / divider), output preview; backend reads doc JSON and outputs `items[]`.
+- Unit tests: split-by-heading and split-by-divider parsing from blocks JSON.
+
+**Implementation order:** TipTap (or Lexical) editor first; then storage (local then DB); then Ideas Source node wiring and parsing. Keep code modular and typed (TypeScript + Zod).
+
+---
+
+#### 7c.7 Option B: Idea docs CRUD via backend (database storage)
+
+**Goal:** Store Ideas & Scripts documents in the database and expose full CRUD via a dedicated API. The editor and the Ideas Source (In-app Editor) node use this API instead of (or in addition to) localStorage.
+
+**Status:** Planning only (no implementation yet).
+
+**Data model (Prisma)**
+
+- **IdeaDoc** (or `IdeaDocument`): `id` (cuid), `userId`, `title` (String), `content` (Json — TipTap doc), `createdAt`, `updatedAt`. Optional: `deletedAt` (DateTime?) for soft delete (Trash).
+- Relation: `User` has many `IdeaDoc`; `IdeaDoc` belongs to `User`.
+- Migration: add table; ensure indexes on `userId` and optionally `(userId, deletedAt)` for list queries.
+
+**API routes**
+
+| Method | Route | Description |
+|--------|--------|-------------|
+| GET | `/api/idea-docs` | List user’s docs (exclude soft-deleted unless `?trash=1`). Return `[{ id, title, createdAt, updatedAt }]`. Sort by `updatedAt` desc. |
+| POST | `/api/idea-docs` | Create doc. Body: `{ title?: string }`. Default title "Untitled". Content = default empty TipTap doc. Return full doc. |
+| GET | `/api/idea-docs/:id` | Get one doc (title + content). 404 if not found or not owned. |
+| PUT | `/api/idea-docs/:id` | Update. Body: `{ title?: string, content?: object }`. Validate content (Zod). Return updated doc. |
+| DELETE | `/api/idea-docs/:id` | Soft delete (set `deletedAt`). Optional `?permanent=1` or separate endpoint for hard delete / empty Trash. |
+
+All routes require authentication; scope by `req.user.userId`.
+
+**Frontend changes**
+
+- **Editor page:** Replace localStorage read/write with API: load list from `GET /api/idea-docs`; on doc select, `GET /api/idea-docs/:id` and set editor content; autosave and title save → `PUT /api/idea-docs/:id`. Create new doc → `POST /api/idea-docs`, then set as current and load. Delete → `DELETE /api/idea-docs/:id`; if current doc deleted, clear editor or switch to another doc.
+- **Sidebar:** "All Docs" shows list from API; "Trash" shows list with `?trash=1`; Restore = clear `deletedAt` (PATCH or PUT); Delete permanently = hard delete.
+- **Optional:** Keep a localStorage fallback or one-time migration (import existing single doc into first API-created doc) for users who had data only in localStorage.
+
+**Ideas Source node (In-app Editor) with Option B**
+
+- **Node config:** Add field `ideaDocId` (optional). When provider is `in_app_editor`, document dropdown is populated from `GET /api/idea-docs`; user selects a doc (store `ideaDocId`).
+- **Run workflow:** When the node has `ideaDocId`, backend fetches doc by id (from DB) for the current user, then runs existing split logic (by headings or divider). No need for frontend to send full `ideaDoc` in execute body when `ideaDocId` is set.
+- **Backward compatibility:** If execute body still includes `ideaDoc` (e.g. client without doc selector or legacy), backend uses it when present; otherwise when `ideaDocId` is set, fetch doc from DB.
+
+**Implementation order (Option B)**
+
+1. Prisma schema + migration for IdeaDoc.
+2. API routes: list, create, get by id, update, delete (soft + optional hard).
+3. Frontend: API client for idea-docs; editor page switch from localStorage to API (create, list, open, autosave, delete, Trash UI).
+4. Ideas Source node: add `ideaDocId` to config and dropdown; backend execution path that loads doc by id when `ideaDocId` is set; keep existing `ideaDoc` body support for backward compatibility.
+5. Tests: API unit/integration tests; optional e2e for create → edit → list → delete.
+
+---
+
+#### 7c.8 Multi-doc support for Ideas Source (In-app Editor)
+
+**Goal:** Allow one Ideas Source node (provider = In-app Editor) to pull ideas from **multiple documents** in the Ideas & Scripts editor, so a single workflow run can iterate over “Paris”, “Italy”, etc. without forcing the user to merge everything into one doc.
+
+**Behaviour (MVP)**
+
+- **Modes:**
+  - **Single document (default):** current behaviour — user selects **one** document; Ideas Source splits that doc into items (by H2 / divider).
+  - **Multiple documents:** user selects **multiple** docs; Ideas Source returns **one item per document**.
+- **Multi-doc item shape:**
+  - `title`: document title (e.g. “Paris”).
+  - `ideaText`: short summary/idea extracted from the document (see extraction rules).
+  - `scriptText`: full script text extracted from the document.
+  - `rawBlocks`: original TipTap block array for that doc (optional).
+  - `meta`: at least `{ docId, docTitle }`.
+- **Extraction rules (per document):**
+  - If the doc follows the H2/Idea/Script structure from §7c.2:
+    - First H2 (or first non-empty line) → `title`.
+    - First “Idea:” style paragraph (or first short paragraph) → `ideaText`.
+    - Remaining paragraphs → `scriptText`.
+  - If the doc is a single short script:
+    - `title` = document title.
+    - `ideaText` = first sentence or first ~140 characters.
+    - `scriptText` = full text.
+  - If parsing fails: `title = doc.title`, `ideaText = ""`, `scriptText = full plain-text content`.
+
+**Node UI (Ideas Source, provider = In-app Editor)**
+
+- Add a **“Document mode”** field:
+  - Options: **Single document** (default), **Multiple documents**.
+- **When Single document:**
+  - Keep current **Document** dropdown (single select).
+- **When Multiple documents:**
+  - Show a **multi-select list** of docs (checkbox list or multi-select dropdown) using `/api/idea-docs`:
+    - Each row: title + updated time.
+  - Helpers:
+    - “Select all docs” (optional).
+  - Validation: at least one doc must be selected to run; otherwise show a clear error in node config / logs.
+
+**Execution model**
+
+- Request body does not need to change; Ideas Source loads docs by id for the current user.
+- Backend for provider `in_app_editor`:
+  - `mode === "single"`: existing path — load one `ideaDocId`, split into items by headings/divider.
+  - `mode === "multi"`:
+    - Load each selected `ideaDocId` (excluding trashed docs).
+    - For each doc, compute a single `IdeaItem` using the extraction rules.
+    - Return `items: IdeaItem[]` (one per doc), where `IdeaItem` extends the existing Ideas List item shape with `ideaText`, `scriptText`, and `meta.docId`.
+- **For Each + Write Script + Voice:**
+  - Flow: Ideas Source (multi-doc) → For Each → Write Script → Voice → …  
+  - For Each iterates per document; Write Script uses `$item.title`, `$item.ideaText`, `$item.scriptText` as today; Voice speaks the script from Write Script or `$item.scriptText`.
+
+**Out of scope for this MVP**
+
+- Flattening **all** ideas from **all** docs (multi-doc + multi-idea per doc) — that can be a later enhancement.
+- Filtering docs by folder/tags; first version is simple manual multi-select.
 
 ---
 
@@ -805,7 +1394,9 @@ model ReviewSession {
 
 | Method | Route                     | Description                              | Auth     |
 |--------|----------------------------|------------------------------------------|----------|
-| GET    | `/api/storage/play?key=...` | Return presigned S3 URL for playback (e.g. TTS audio). Key must be `voice-output/{userId}/...`. | Required |
+| GET    | `/api/storage/play?key=...` | Return play URL: if `CLOUDFRONT_DOMAIN` is set, CloudFront URL (Option A); else presigned S3 URL. Key must be `voice-output/{userId}/...` or `video-assets/{userId}/...`. | Required |
+
+**Later (backlog):** Implement **Option B — CloudFront signed URLs** for private, time-limited play URLs. Requires CloudFront key pair and signing in backend (`CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY`); distribution must require signed requests. Provides expiry and better security than Option A (un signed CloudFront URLs).
 
 ### Projects / EDL (Phase 7a)
 

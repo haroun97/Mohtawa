@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { WorkflowNode } from '@/types/workflow';
-import { voiceProfilesApi, mediaApi } from '@/lib/api';
+import { voiceProfilesApi, mediaApi, ideaDocsApi } from '@/lib/api';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { HelpCircle, Play, Upload, Edit3 } from 'lucide-react';
 import * as Icons from 'lucide-react';
 import { AudioPlayer } from './AudioPlayer';
+import { Checkbox } from '@/components/ui/checkbox';
 import { hasPlayableAudio } from '@/lib/audioPlayback';
 
 function getIcon(name: string) {
@@ -33,6 +34,28 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
   const isPreviewOutput = definition.type === 'preview-output';
   const isAutoEdit = definition.type === 'video.auto_edit';
   const isReviewNode = definition.type === 'review.approval_gate';
+  const isIdeasSource = definition.type === 'ideas.source';
+  const { data: ideaDocs = [] } = useQuery({
+    queryKey: ['idea-docs'],
+    queryFn: () => ideaDocsApi.list(false),
+    enabled: isIdeasSource && config.provider === 'in_app_editor',
+  });
+
+  // When Ideas Source is in multi-doc mode and no docs are selected yet, default to all docs
+  useEffect(() => {
+    if (
+      !isIdeasSource ||
+      config.provider !== 'in_app_editor' ||
+      config.inAppEditorDocMode !== 'multi' ||
+      ideaDocs.length === 0
+    ) {
+      return;
+    }
+    const selected = config.ideaDocIds;
+    if (Array.isArray(selected) && selected.length > 0) return;
+    updateNodeConfig(node.id, { ideaDocIds: ideaDocs.map((d) => d.id) });
+  }, [isIdeasSource, config.provider, config.inAppEditorDocMode, config.ideaDocIds, ideaDocs, node.id, updateNodeConfig]);
+
   const lastRunStep =
     runLog?.steps?.find((s) => s.nodeId === node.id) ??
     lastCompletedRunLog?.steps?.find((s) => s.nodeId === node.id);
@@ -112,7 +135,57 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
                     </Tooltip>
                   )}
                 </div>
-                {field.type === 'text' && isVoiceTts && field.name === 'voiceProfileId' ? (
+                {field.type === 'text' && isIdeasSource && config.provider === 'in_app_editor' && field.name === 'ideaDocId' ? (
+                  config.inAppEditorDocMode === 'multi' ? (
+                    <div className="space-y-1 rounded-md border border-border/60 p-2 max-h-40 overflow-auto">
+                      {ideaDocs.map((d) => {
+                        const selectedIds: string[] = Array.isArray(config.ideaDocIds) ? config.ideaDocIds : [];
+                        const checked = selectedIds.includes(d.id);
+                        return (
+                          <label key={d.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(v) => {
+                                const next = new Set(selectedIds);
+                                if (v) next.add(d.id);
+                                else next.delete(d.id);
+                                handleChange('ideaDocIds', Array.from(next));
+                              }}
+                            />
+                            <span className="truncate flex-1">{d.title || 'Untitled'}</span>
+                          </label>
+                        );
+                      })}
+                      {ideaDocs.length === 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          No documents. Create one in Ideas &amp; Scripts.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <Select
+                      value={config[field.name] || '__none__'}
+                      onValueChange={v => handleChange(field.name, v === '__none__' ? undefined : v)}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Select a document..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__" className="text-xs">— No document —</SelectItem>
+                        {ideaDocs.map((d) => (
+                          <SelectItem key={d.id} value={d.id} className="text-xs">
+                            {d.title || 'Untitled'}
+                          </SelectItem>
+                        ))}
+                        {ideaDocs.length === 0 && (
+                          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                            No documents. Create one in Ideas &amp; Scripts.
+                          </div>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  )
+                ) : field.type === 'text' && isVoiceTts && field.name === 'voiceProfileId' ? (
                   <Select
                     value={config[field.name] || ''}
                     onValueChange={v => handleChange(field.name, v)}

@@ -52,6 +52,24 @@
     --social-color: 45 90% 52%;
     --logic-color: 25 80% 52%;
     --utility-color: 220 14% 55%;
+    --ideas-color: 170 55% 45%;
+    --text-color: 210 60% 50%;
+    --script-color: 270 55% 52%;
+
+    /* Video editor (scene-editor template) — dark tokens when editor is open */
+    --editor-bg: 220 18% 8%;
+    --editor-bg-immersive: 224 25% 6%;
+    --editor-surface: 220 15% 12%;
+    --editor-surface-hover: 220 15% 16%;
+    --editor-preview-bg: 0 0% 5%;
+    --editor-timeline-bg: 220 15% 10%;
+    --editor-toolbar-bg: 220 18% 9%;
+    --selection: 45 100% 55%;
+    --selection-foreground: 0 0% 0%;
+    --text-layer: 270 60% 60%;
+    --text-layer-foreground: 0 0% 100%;
+    --audio-waveform: 330 70% 60%;
+    --playhead: 0 0% 100%;
 
     --gradient-primary: linear-gradient(135deg, hsl(220 70% 50%), hsl(262 60% 55%));
     --shadow-soft: 0 1px 3px 0 hsl(220 30% 80% / 0.3), 0 1px 2px -1px hsl(220 30% 80% / 0.3);
@@ -104,6 +122,9 @@
     --social-color: 45 85% 55%;
     --logic-color: 25 75% 55%;
     --utility-color: 220 14% 60%;
+    --ideas-color: 170 50% 48%;
+    --text-color: 210 55% 55%;
+    --script-color: 270 50% 58%;
 
     --shadow-soft: 0 1px 3px 0 hsl(224 30% 3% / 0.5), 0 1px 2px -1px hsl(224 30% 3% / 0.5);
     --shadow-md: 0 4px 6px -1px hsl(224 30% 3% / 0.4), 0 2px 4px -2px hsl(224 30% 3% / 0.4);
@@ -191,4 +212,64 @@
 }
 .react-flow__handle:hover {
   @apply bg-primary border-primary !important;
+}
+
+/* Video editor utilities (scene-editor template) */
+.editor-glass {
+  background-color: hsl(var(--editor-surface));
+  backdrop-filter: blur(24px);
+}
+.editor-glass-hover:hover {
+  background-color: hsl(var(--editor-surface-hover));
+  transition: background-color 0.15s;
+}
+.editor-glass-hover:hover:not(:disabled) {
+  @apply ring-1 ring-foreground/10;
+}
+.editor-glass-hover:active:not(:disabled) {
+  @apply scale-[0.98];
+}
+.ios-segmented {
+  @apply rounded-lg p-1;
+  background-color: hsl(var(--editor-surface));
+}
+.ios-segmented-active {
+  @apply rounded-md shadow-sm;
+  background-color: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+.safe-area-guide {
+  border: 1px dashed hsl(var(--muted-foreground) / 0.2);
+}
+.clip-selected {
+  box-shadow: 0 0 0 2px hsl(var(--selection));
+}
+.toolbar-icon {
+  @apply flex flex-col items-center gap-1 transition-all duration-150 cursor-pointer select-none;
+  color: hsl(var(--muted-foreground) / 0.9);
+}
+.toolbar-icon:hover:not(:disabled) {
+  color: hsl(var(--foreground));
+  @apply ring-1 ring-foreground/10;
+}
+.toolbar-icon:active:not(:disabled) {
+  @apply scale-[0.98];
+}
+.toolbar-icon-active {
+  color: hsl(var(--primary));
+  box-shadow: 0 0 12px hsl(var(--primary) / 0.25);
+}
+.toolbar-icon-active:hover:not(:disabled) {
+  box-shadow: 0 0 14px hsl(var(--primary) / 0.35);
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.smooth-scroll {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }

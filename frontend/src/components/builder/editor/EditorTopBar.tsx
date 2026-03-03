@@ -1,6 +1,5 @@
 import { useState, type RefObject } from 'react';
-import { Button } from '@/components/ui/button';
-import { X, Loader2, Download, ChevronDown, Undo2, Redo2 } from 'lucide-react';
+import { X, Loader2, Upload, ChevronDown } from 'lucide-react';
 import { ExportModal, type ExportOptions, type ExportResolution, type ExportFps } from './ExportModal';
 
 interface EditorTopBarProps {
@@ -59,77 +58,52 @@ export function EditorTopBar({
 
   return (
     <>
-      <header className="flex items-center justify-between gap-2 border-b border-border bg-background/95 px-3 py-2 flex-shrink-0 min-h-[48px] md:min-h-0">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <Button
-            ref={closeButtonRef}
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="shrink-0 rounded-full h-9 min-h-[44px] min-w-[44px] md:min-h-9 md:min-w-9 w-9"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </Button>
-          <div className="flex items-center gap-0.5 border-r border-border pr-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onUndo}
-              disabled={!canUndo}
-              className="shrink-0 h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 w-8"
-              aria-label="Undo"
-              title="Undo"
-            >
-              <Undo2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onRedo}
-              disabled={!canRedo}
-              className="shrink-0 h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 w-8"
-              aria-label="Redo"
-              title="Redo"
-            >
-              <Redo2 className="h-4 w-4" />
-            </Button>
-          </div>
-          <button
-            type="button"
-            className="flex items-center gap-1 min-w-0 text-sm font-medium truncate text-left hover:opacity-80 transition-opacity"
-            aria-haspopup="listbox"
-            aria-expanded={false}
-          >
-            <span className="truncate">{projectName}</span>
-            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-          </button>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
+      <header className="flex items-center justify-between px-4 py-3 bg-editor-bg-immersive flex-shrink-0 min-h-[48px] border-b border-border/30">
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          className="w-9 h-9 flex items-center justify-center rounded-full text-muted-foreground hover:bg-editor-surface hover:text-foreground transition-colors min-w-[44px] min-h-[44px] md:min-w-9 md:min-h-9"
+          aria-label="Close"
+        >
+          <X size={18} />
+        </button>
+
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-editor-surface border border-primary/20 editor-glass-hover min-w-0"
+          aria-haspopup="listbox"
+          aria-expanded={false}
+        >
+          <span className="text-sm font-medium text-white truncate">{projectName}</span>
+          <ChevronDown size={14} className="text-white/70 shrink-0" />
+        </button>
+
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleExportClick}
             disabled={exportDisabled}
-            className="cursor-pointer rounded-md border border-transparent px-2 py-0.5 text-[10px] font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            aria-label="Change resolution and export options"
-            title="Change resolution (HD / 2K / 4K) and export"
+            className="px-2.5 py-1 rounded-md bg-editor-surface text-xs font-semibold text-primary disabled:opacity-50 disabled:pointer-events-none"
+            aria-label="Resolution and export options"
+            title="Resolution and export"
           >
             {resolutionBadgeLabel(resolution)}
           </button>
-          <Button
-            size="sm"
+          <button
+            type="button"
             onClick={handleExportClick}
             disabled={exportDisabled}
-            className="gap-1.5 px-2 sm:px-3 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8"
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-50 disabled:pointer-events-none min-w-[44px] min-h-[44px] md:min-w-9 md:min-h-9"
+            aria-label="Export"
             title="Export"
           >
             {exporting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 size={16} className="animate-spin" />
             ) : (
-              <Download className="h-4 w-4" />
+              <Upload size={16} />
             )}
-            <span className="hidden sm:inline">Export</span>
-          </Button>
+          </button>
         </div>
       </header>
       {error && (

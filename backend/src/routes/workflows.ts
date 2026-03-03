@@ -118,12 +118,25 @@ router.post(
   },
 );
 
+const executeBodySchema = z.object({
+  ideaDoc: z
+    .object({
+      title: z.string().optional(),
+      content: z.unknown(),
+    })
+    .optional(),
+});
+
 // POST /api/workflows/:id/execute — run workflow
 router.post(
   "/:id/execute",
+  validate(executeBodySchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const execution = await executeWorkflow(paramId(req.params.id), req.user!.userId);
+      const body = req.body as z.infer<typeof executeBodySchema>;
+      const execution = await executeWorkflow(paramId(req.params.id), req.user!.userId, {
+        ideaDoc: body.ideaDoc,
+      });
       res.status(201).json(execution);
     } catch (err) {
       next(err);

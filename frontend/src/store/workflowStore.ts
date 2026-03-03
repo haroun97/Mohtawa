@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Workflow, WorkflowNode, WorkflowEdge, RunLog, RunStep, RunStatus } from '@/types/workflow';
 import { nodeDefinitions } from './nodeDefinitions';
 import { api } from '@/lib/api';
+import { getIdeasDocForWorkflow } from '@/lib/ideasEditorStorage';
 
 interface HistoryEntry {
   nodes: WorkflowNode[];
@@ -706,7 +707,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const doExecute = async () => {
       try {
         await get().saveWorkflowToApi();
-        const exec = await api.post<ApiExecution>(`/workflows/${wf.id}/execute`, {});
+        const needsIdeaDocInBody = wf.nodes.some(
+          (n: WorkflowNode) =>
+            n.data?.definition?.type === 'ideas.source' &&
+            n.data?.config?.provider === 'in_app_editor' &&
+            !n.data?.config?.ideaDocId
+        );
+        const body = needsIdeaDocInBody ? { ideaDoc: getIdeasDocForWorkflow() ?? undefined } : {};
+        const exec = await api.post<ApiExecution>(`/workflows/${wf.id}/execute`, body);
 
         set(state => ({
           runLog: state.runLog ? {

@@ -6,6 +6,7 @@ export type SelectedBlock =
   | { type: 'video'; id: string }
   | { type: 'text'; id: string }
   | { type: 'adjust' }
+  | { type: 'music' }
   | { type: 'audio' }
   | null;
 

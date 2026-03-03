@@ -1,4 +1,4 @@
-export type NodeCategory = 'trigger' | 'ai' | 'voice' | 'video' | 'social' | 'logic' | 'utility' | 'review';
+export type NodeCategory = 'trigger' | 'ai' | 'voice' | 'video' | 'social' | 'logic' | 'utility' | 'review' | 'ideas' | 'text' | 'script';
 
 export interface NodeDefinition {
   type: string;
@@ -53,6 +53,15 @@ export interface WorkflowEdge {
 
 export type RunStatus = 'idle' | 'running' | 'success' | 'error' | 'waiting_review';
 
+/** Step log for a single node inside a For Each iteration */
+export interface IterationStepLog {
+  nodeId: string;
+  nodeTitle: string;
+  status: string;
+  output?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface RunStep {
   nodeId: string;
   nodeTitle: string;
@@ -63,6 +72,12 @@ export interface RunStep {
   output?: Record<string, any>;
   error?: string;
   reviewSessionId?: string;
+  /** When this step is For Each: one entry per iteration with child step logs */
+  iterationSteps?: Array<{
+    iteration: number;
+    itemTitle?: string;
+    steps: IterationStepLog[];
+  }>;
 }
 
 export interface RunLog {
