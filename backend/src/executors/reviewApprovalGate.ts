@@ -16,7 +16,17 @@ export async function executeReviewApprovalGate(ctx: ExecutorContext): Promise<E
   const edlUrl = resolveInputDeep<string>(inputData, "edlUrl");
 
   if (!projectId || !edlUrl) {
-    return { error: "projectId and edlUrl are required (from upstream video.auto_edit)." };
+    const keys = Object.keys(inputData);
+    if (keys.length === 0) {
+      return {
+        error:
+          "No incoming connections. Connect the output of the 'Auto Edit (Draft)' node to this node, then save the workflow and run again.",
+      };
+    }
+    return {
+      error:
+        "projectId and edlUrl are required (from upstream video.auto_edit). Connect 'Auto Edit (Draft)' to this node and ensure Auto Edit runs successfully.",
+    };
   }
 
   const mode = (config.mode as string) || "auto_approve";

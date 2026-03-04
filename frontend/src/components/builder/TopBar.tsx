@@ -86,9 +86,9 @@ export function TopBar({ onToggleLibrary, libraryOpen, onOpenCommandPalette, onO
         <Button variant="ghost" size="icon" className="h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 w-8 rounded-full" onClick={toggle} aria-label="Toggle theme">
           {isDark() ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
         </Button>
-        <Button size="sm" className="h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 gap-1.5 ml-0.5 sm:ml-1 px-2 sm:px-3" onClick={runWorkflow} title="Run workflow">
+        <Button size="sm" className="h-8 min-h-[44px] min-w-[44px] md:min-h-8 md:min-w-8 gap-1.5 ml-0.5 sm:ml-1 px-2 sm:px-3" onClick={runWorkflow} title="Run workflow" disabled={saveStatus === 'saving'}>
           <Play className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Run</span>
+          <span className="hidden sm:inline">{saveStatus === 'saving' ? 'Saving…' : 'Run'}</span>
         </Button>
       </div>
     </header>

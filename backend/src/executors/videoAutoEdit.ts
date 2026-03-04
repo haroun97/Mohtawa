@@ -98,7 +98,7 @@ export async function executeVideoAutoEdit(ctx: ExecutorContext): Promise<Execut
   if (!voiceoverUrl) {
     return {
       error:
-        "Voiceover is required. Connect a Voice TTS node to the 'voiceover' input, or set 'Voiceover URL' in this node's config.",
+        "Voiceover is required. Connect the 'My Voice (Clone) → Generate Voiceover' node to this node's input, or set 'Voiceover URL' in this node's config. Save the workflow after connecting.",
     };
   }
   if (clips.length === 0) return { error: "At least one clip with url is required." };

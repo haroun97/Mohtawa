@@ -192,7 +192,7 @@ interface WorkflowState {
   createWorkflowApi: (name?: string) => Promise<string>;
   deleteWorkflowApi: (id: string) => Promise<void>;
   duplicateWorkflowApi: (id: string) => Promise<Workflow>;
-  saveWorkflowToApi: () => Promise<void>;
+  saveWorkflowToApi: () => Promise<boolean>;
 
   // Local state actions
   setActiveWorkflow: (id: string) => void;
@@ -703,10 +703,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     set({ runLog, lastCompletedRunLog: null, inspectorTab: 'logs' });
 
-    // Save first, then execute on backend
+    // Save first, then execute on backend (execute only if save succeeded so backend has latest edges)
     const doExecute = async () => {
       try {
-        await get().saveWorkflowToApi();
+        const saved = await get().saveWorkflowToApi();
+        if (!saved) {
+          set(state => ({ runLog: null, ...state }));
+          return;
+        }
         const needsIdeaDocInBody = wf.nodes.some(
           (n: WorkflowNode) =>
             n.data?.definition?.type === 'ideas.source' &&

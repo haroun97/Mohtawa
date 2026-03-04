@@ -128,22 +128,83 @@ async function persistWorkflowLastCompletedRunLog(
   });
 }
 
+/** Normalize id for edge matching (avoids missing edges due to whitespace or string/number). */
+function normId(id: string | undefined): string {
+  return String(id ?? "").trim();
+}
+
+/** Get output from map by id, with normalized fallback so source/target mismatches (e.g. whitespace) still match. */
+function getOutputByNodeId(
+  map: Map<string, Record<string, unknown>>,
+  id: string | undefined,
+): Record<string, unknown> | undefined {
+  const raw = map.get(id ?? "");
+  if (raw) return raw;
+  const n = normId(id);
+  if (!n) return undefined;
+  for (const [k, v] of map) {
+    if (normId(k) === n) return v;
+  }
+  return undefined;
+}
+
+/** Get output from a Record of node outputs by id, with normalized fallback. */
+function getOutputFromRecord(
+  record: Record<string, Record<string, unknown>>,
+  id: string | undefined,
+): Record<string, unknown> | undefined {
+  const raw = record[id ?? ""];
+  if (raw && typeof raw === "object") return raw;
+  const n = normId(id);
+  if (!n) return undefined;
+  const entry = Object.entries(record).find(([k]) => normId(k) === n);
+  return entry?.[1] && typeof entry[1] === "object" ? entry[1] : undefined;
+}
+
+/** Collect all node ids that are upstream of the given node (sources of edges leading to it, transitively). */
+function getAncestorIds(
+  nodeNorm: string,
+  edges: EdgeData[],
+): Set<string> {
+  const out = new Set<string>();
+  let current = new Set<string>([nodeNorm]);
+  while (current.size > 0) {
+    const next = new Set<string>();
+    for (const e of edges) {
+      const tgt = normId(e.target);
+      const src = normId(e.source);
+      if (current.has(tgt) && src && src !== nodeNorm) {
+        if (!out.has(src)) {
+          out.add(src);
+          next.add(src);
+        }
+      }
+    }
+    current = next;
+  }
+  return out;
+}
+
 function topologicalSort(
   nodes: NodeData[],
   edges: EdgeData[],
 ): NodeData[] {
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const nodeMap = new Map(nodes.map((n) => [normId(n.id), n]));
   const inDegree = new Map<string, number>();
   const adjacency = new Map<string, string[]>();
 
   for (const n of nodes) {
-    inDegree.set(n.id, 0);
-    adjacency.set(n.id, []);
+    const nid = normId(n.id);
+    inDegree.set(nid, 0);
+    adjacency.set(nid, []);
   }
 
   for (const e of edges) {
-    inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
-    adjacency.get(e.source)?.push(e.target);
+    const src = normId(e.source);
+    const tgt = normId(e.target);
+    if (!tgt) continue;
+    inDegree.set(tgt, (inDegree.get(tgt) || 0) + 1);
+    adjacency.get(src)?.push(tgt);
   }
 
   const queue: string[] = [];
@@ -247,6 +308,7 @@ async function runExecution(
     (n) => n.data.status !== "disabled",
   );
   const sorted = topologicalSort(activeNodes, edges);
+
   const stepLogs: StepLog[] = sorted.map((n, i) => {
     if (i < startFromStepIndex && previousLogs?.[i]) {
       return { ...previousLogs[i] };
@@ -288,13 +350,18 @@ async function runExecution(
     });
 
     // Scalable input: key by source node id so multiple upstreams never overwrite (each connection keeps its own key).
-    const incomingEdges = edges.filter((e) => e.target === node.id);
+    const incomingEdges = edges.filter((e) => normId(e.target) === normId(node.id));
     const inputData: Record<string, unknown> = {};
     for (const edge of incomingEdges) {
-      const upstream = nodeOutputs.get(edge.source);
+      const upstream = getOutputByNodeId(nodeOutputs, edge.source);
       if (upstream) {
         inputData[edge.source] = upstream;
       }
+    }
+    if (incomingEdges.length === 0) {
+      console.warn(
+        `[execution] Node "${node.data.definition?.title ?? node.id}" (${nodeType}) has no incoming edges. Connect upstream nodes and save the workflow.`,
+      );
     }
     if (nodeType === "ideas.source") {
       const config = node.data.config || {};
@@ -374,16 +441,21 @@ async function runExecution(
             continue;
           }
           // Key by source so multiple upstreams (e.g. Auto Edit + Preview Loop Outputs) don't overwrite.
-          const downIncoming = edges.filter((e) => e.target === downNode.id);
+          const downIncoming = edges.filter((e) => normId(e.target) === normId(downNode.id));
           const downInput: Record<string, unknown> = {};
           for (const edge of downIncoming) {
             const src = edge.source;
-            if (src === forEachId) {
+            if (normId(src) === normId(forEachId)) {
               downInput._item = itemObj;
             } else {
-              const up = iterOutputs.get(src);
+              const up = getOutputByNodeId(iterOutputs, src);
               if (up) downInput[src] = up;
             }
+          }
+          if (downIncoming.length === 0) {
+            console.warn(
+              `[execution ForEach] Node "${downNode.data.definition?.title ?? downNode.id}" (${downType}) has no incoming edges. Connect upstream nodes and save the workflow.`,
+            );
           }
 
           const downCtx: ExecutorContext = {
@@ -792,19 +864,73 @@ export async function executeSingleNode(
     }
   }
 
-  // Key by source (scalable: multiple upstreams keep separate keys).
-  const incomingEdges = edges.filter((e) => e.target === nodeId);
-  const inputData: Record<string, unknown> = {};
-  for (const edge of incomingEdges) {
-    const upstream = priorOutputs[edge.source];
-    if (upstream) {
-      inputData[edge.source] = upstream;
-    }
-  }
-
   const getApiKey = (service: string) => getDecryptedKey(userId, service);
   const getVoiceProfile = (profileId: string) =>
     getVoiceProfileForExecution(profileId, userId);
+
+  const nodeNorm = normId(nodeId);
+  const activeNodes = nodes.filter((n) => n.data?.status !== "disabled");
+  const ancestorIds = getAncestorIds(nodeNorm, edges);
+  const ancestorNodes = activeNodes.filter((n) => ancestorIds.has(normId(n.id)));
+  const subgraphEdges = edges.filter(
+    (e) => ancestorIds.has(normId(e.source)) && ancestorIds.has(normId(e.target)),
+  );
+  const sortedAncestors = topologicalSort(ancestorNodes, subgraphEdges);
+
+  const computedOutputs: Record<string, Record<string, unknown>> = {};
+  for (const up of sortedAncestors) {
+    const existing =
+      getOutputFromRecord(priorOutputs, up.id) ?? getOutputFromRecord(computedOutputs, up.id);
+    if (existing) continue;
+
+    const upIncoming = subgraphEdges.filter((e) => normId(e.target) === normId(up.id));
+    const upInput: Record<string, unknown> = {};
+    for (const edge of upIncoming) {
+      const val =
+        getOutputFromRecord(priorOutputs, edge.source) ??
+        getOutputFromRecord(computedOutputs, edge.source);
+      if (val && typeof val === "object") upInput[edge.source] = val;
+    }
+
+    const upCtx: ExecutorContext = {
+      nodeId: up.id,
+      nodeType: up.data.definition?.type || up.type,
+      category: up.data.definition?.category || "utility",
+      config: (up.data?.config as Record<string, unknown>) || {},
+      inputData: upInput,
+      getApiKey,
+      userId,
+      getVoiceProfile,
+      executionId: "test-single",
+      stepIndex: 0,
+    };
+    const upResult = await executeNode(upCtx);
+    if ("error" in upResult) {
+      const upTitle = up.data?.definition?.title ?? up.id;
+      return {
+        stepLog: {
+          nodeId: node.id,
+          nodeType: node.data.definition?.type || node.type,
+          nodeTitle: node.data.definition?.title || "Node",
+          status: "error",
+          startedAt: new Date().toISOString(),
+          error: `Upstream node "${upTitle}" failed: ${upResult.error}`,
+        },
+      };
+    }
+    computedOutputs[up.id] = upResult.output;
+  }
+
+  const combinedOutputs: Record<string, Record<string, unknown>> = {
+    ...priorOutputs,
+    ...computedOutputs,
+  };
+  const incomingEdges = edges.filter((e) => normId(e.target) === nodeNorm);
+  const inputData: Record<string, unknown> = {};
+  for (const edge of incomingEdges) {
+    const upstream = getOutputFromRecord(combinedOutputs, edge.source);
+    if (upstream) inputData[edge.source] = upstream;
+  }
 
   const startedAt = new Date().toISOString();
   const ctx: ExecutorContext = {

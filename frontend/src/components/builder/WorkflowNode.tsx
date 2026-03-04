@@ -94,6 +94,10 @@ export const WorkflowNodeComponent = memo(({ id, data }: { id: string; data: any
   const draftVideoUrl = isReviewNode && lastStep?.output && typeof (lastStep.output as Record<string, unknown>).draftVideoUrl === 'string'
     ? (lastStep.output as Record<string, unknown>).draftVideoUrl as string
     : undefined;
+  if (isReviewNode) {
+    const stepsWithIters = runLog?.steps?.filter((s) => (s.iterationSteps?.length ?? 0) > 0) ?? [];
+    console.log('[Review node DEBUG] canvas nodeId:', id, 'stepFromRun:', !!stepFromRun, 'stepFromCompleted:', !!stepFromCompleted, 'lastStep source:', lastStep === stepFromRun ? 'runLog' : 'lastCompletedRunLog', 'draftVideoUrl:', !!draftVideoUrl, 'runLog.steps with iterationSteps:', stepsWithIters.length, stepsWithIters.map((s) => ({ nodeId: s.nodeId, iterCount: s.iterationSteps?.length })));
+  }
 
   const [videoPlayUrl, setVideoPlayUrl] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);

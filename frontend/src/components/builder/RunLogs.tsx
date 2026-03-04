@@ -17,7 +17,8 @@ const statusIcon: Record<string, React.ReactNode> = {
 };
 
 export function RunLogs() {
-  const { runLog, lastCompletedRunLog, rerunFromNode, runWorkflow, getActiveWorkflow } = useWorkflowStore();
+  const { runLog, lastCompletedRunLog, rerunFromNode, runWorkflow, getActiveWorkflow, saveStatus } = useWorkflowStore();
+  const isSaving = saveStatus === 'saving';
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [expandedIterations, setExpandedIterations] = useState<Set<string>>(new Set());
   const [reviewStep, setReviewStep] = useState<{ stepId: string; output: Record<string, unknown> } | null>(null);
@@ -74,8 +75,8 @@ export function RunLogs() {
           <span className="text-xs font-semibold capitalize">{runLog.status.replace('_', ' ')}</span>
         </div>
         {runLog.status !== 'running' && (
-          <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1" onClick={runWorkflow}>
-            <RotateCcw className="h-3 w-3" /> Re-run
+          <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1" onClick={runWorkflow} disabled={isSaving}>
+            <RotateCcw className="h-3 w-3" /> {isSaving ? 'Saving…' : 'Re-run'}
           </Button>
         )}
       </div>

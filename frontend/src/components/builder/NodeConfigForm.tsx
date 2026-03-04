@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { WorkflowNode } from '@/types/workflow';
@@ -11,11 +11,12 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { HelpCircle, Play, Upload, Edit3 } from 'lucide-react';
+import { HelpCircle, Play, Upload, Edit3, ClipboardCheck } from 'lucide-react';
 import * as Icons from 'lucide-react';
 import { AudioPlayer } from './AudioPlayer';
 import { Checkbox } from '@/components/ui/checkbox';
 import { hasPlayableAudio } from '@/lib/audioPlayback';
+import { ReviewModal } from './ReviewModal';
 
 function getIcon(name: string) {
   const Icon = (Icons as any)[name];
@@ -27,14 +28,77 @@ interface Props {
   onOpenEdlEditor?: (projectId: string) => void;
 }
 
+interface ReviewDraftEntry {
+  executionId: string;
+  stepId: string;
+  stepOutput: Record<string, unknown>;
+  label: string;
+}
+
+function collectReviewDrafts(
+  nodeId: string,
+  runLog: { id: string; steps: Array<{ nodeId: string; output?: Record<string, unknown>; iterationSteps?: Array<{ iteration: number; itemTitle?: string; steps: Array<{ nodeId: string; output?: Record<string, unknown> }> }> }> } | null
+): ReviewDraftEntry[] {
+  if (!runLog) {
+    console.log('[Review drafts DEBUG] no runLog');
+    return [];
+  }
+  const drafts: ReviewDraftEntry[] = [];
+  const hasAnyIterations = runLog.steps.some((s) => (s.iterationSteps?.length ?? 0) > 0);
+  console.log('[Review drafts DEBUG] runLog.id:', runLog.id, 'steps.length:', runLog.steps?.length, 'hasAnyIterations:', hasAnyIterations, 'reviewNodeId:', nodeId);
+  runLog.steps?.forEach((s, i) => {
+    console.log('[Review drafts DEBUG] step', i, 'nodeId:', s.nodeId, 'iterationSteps?.length:', s.iterationSteps?.length, 'output?.draftVideoUrl:', typeof (s.output as Record<string, unknown>)?.draftVideoUrl);
+  });
+  if (hasAnyIterations) {
+    for (const step of runLog.steps) {
+      for (const iter of step.iterationSteps ?? []) {
+        const reviewSub = iter.steps.find((s) => s.nodeId === nodeId);
+        const hasDraft = reviewSub?.output && typeof (reviewSub.output as Record<string, unknown>).draftVideoUrl === 'string';
+        console.log('[Review drafts DEBUG] iter', iter.iteration, 'itemTitle:', iter.itemTitle, 'reviewSub found:', !!reviewSub, 'hasDraft:', hasDraft);
+        if (hasDraft) {
+          drafts.push({
+            executionId: runLog.id,
+            stepId: nodeId,
+            stepOutput: reviewSub.output as Record<string, unknown>,
+            label: `Iteration ${iter.iteration + 1}${iter.itemTitle ? `: ${iter.itemTitle}` : ''}`,
+          });
+        }
+      }
+    }
+  } else {
+    for (const step of runLog.steps) {
+      if (step.nodeId === nodeId && step.output && typeof (step.output as Record<string, unknown>).draftVideoUrl === 'string') {
+        drafts.push({
+          executionId: runLog.id,
+          stepId: step.nodeId,
+          stepOutput: step.output as Record<string, unknown>,
+          label: 'Draft',
+        });
+      }
+    }
+  }
+  console.log('[Review drafts DEBUG] collected drafts count:', drafts.length, 'labels:', drafts.map((d) => d.label));
+  return drafts;
+}
+
 export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
-  const { updateNodeConfig, runLog, lastCompletedRunLog, runSingleNode } = useWorkflowStore();
+  const { updateNodeConfig, runLog, lastCompletedRunLog, runSingleNode, getActiveWorkflow } = useWorkflowStore();
   const { definition, config } = node.data;
   const isVoiceTts = definition.type === 'voice.tts';
   const isPreviewOutput = definition.type === 'preview-output';
   const isAutoEdit = definition.type === 'video.auto_edit';
   const isReviewNode = definition.type === 'review.approval_gate';
   const isIdeasSource = definition.type === 'ideas.source';
+  const [reviewModalDraft, setReviewModalDraft] = useState<ReviewDraftEntry | null>(null);
+  const logForDrafts = runLog ?? lastCompletedRunLog ?? null;
+  const reviewDrafts = useMemo(
+    () => (isReviewNode && logForDrafts ? collectReviewDrafts(node.id, logForDrafts) : []),
+    [isReviewNode, node.id, logForDrafts]
+  );
+  if (isReviewNode) {
+    console.log('[Review drafts DEBUG] logForDrafts source:', runLog ? 'runLog' : lastCompletedRunLog ? 'lastCompletedRunLog' : 'none', 'reviewDrafts.length:', reviewDrafts.length);
+  }
+  const workflowId = getActiveWorkflow()?.id ?? '';
   const { data: ideaDocs = [] } = useQuery({
     queryKey: ['idea-docs'],
     queryFn: () => ideaDocsApi.list(false),
@@ -116,7 +180,7 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
         </div>
       </div>
 
-      <Accordion type="multiple" defaultValue={['inputs', 'advanced', ...(showLastRunAudio ? ['last-run'] : [])]} className="space-y-2">
+      <Accordion type="multiple" defaultValue={['inputs', 'advanced', ...(showLastRunAudio ? ['last-run'] : []), ...(reviewDrafts.length > 0 ? ['drafts'] : [])]} className="space-y-2">
         {/* Main inputs */}
         <AccordionItem value="inputs" className="border rounded-lg px-3">
           <AccordionTrigger className="text-xs font-semibold py-2 hover:no-underline">Inputs</AccordionTrigger>
@@ -316,6 +380,33 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
             </div>
           </AccordionContent>
         </AccordionItem>
+
+        {/* Drafts from last run (Review node) */}
+        {isReviewNode && reviewDrafts.length > 0 && (
+          <AccordionItem value="drafts" className="border rounded-lg px-3">
+            <AccordionTrigger className="text-xs font-semibold py-2 hover:no-underline">
+              Drafts from last run ({reviewDrafts.length})
+            </AccordionTrigger>
+            <AccordionContent className="pb-3 space-y-2">
+              <p className="text-[10px] text-muted-foreground">Review or edit each draft from the latest run.</p>
+              <ul className="space-y-1.5">
+                {reviewDrafts.map((draft, idx) => (
+                  <li key={`${draft.executionId}-${draft.stepId}-${idx}`} className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-2 py-1.5">
+                    <span className="text-xs truncate flex-1" title={draft.label}>{draft.label}</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1 shrink-0 h-7 text-[10px]"
+                      onClick={() => setReviewModalDraft(draft)}
+                    >
+                      <ClipboardCheck className="h-3 w-3" /> Review
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </AccordionContent>
+          </AccordionItem>
+        )}
       </Accordion>
 
       {isReviewNode && onOpenEdlEditor && (
@@ -347,6 +438,18 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
       >
         <Play className="h-3 w-3" /> {testingNode ? 'Running…' : 'Test Node'}
       </Button>
+
+      {isReviewNode && reviewModalDraft && workflowId && (
+        <ReviewModal
+          open={!!reviewModalDraft}
+          onClose={() => setReviewModalDraft(null)}
+          workflowId={workflowId}
+          executionId={reviewModalDraft.executionId}
+          stepId={reviewModalDraft.stepId}
+          stepOutput={reviewModalDraft.stepOutput}
+          onResolved={() => setReviewModalDraft(null)}
+        />
+      )}
     </div>
   );
 }
