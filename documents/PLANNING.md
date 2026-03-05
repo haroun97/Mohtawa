@@ -4,7 +4,7 @@
 
 **Date:** February 20, 2026
 **Methodology:** Iterative (phase-based MVP approach)
-**Last updated:** Phase 7c — Ideas & Scripts Editor (Notion-like) and Ideas Source (In-app Editor) specified; TipTap, block UX, content model, storage, node integration. Dashboard link added to editor header (done).
+**Last updated:** March 2026 — **Done (recent):** Phase 7b.7 review-queue + Frontend Review Queue UI + per-row actions (approve/skip/regenerate/edit, queue thumbnails, failed-item error + Regenerate); Auto Edit state persistence (Option A): node card and Logs panel derive display from `iterationSteps` (last successful iteration) so draft state and logs match after reload; EDL editor save-on-close when dirty + Save draft (Ctrl+S and Save button in top bar, `handleSaveDraft` / `handleClose` in EdlEditor); Adjust panel Reset button text set to dark for readability. **Next:** Phase 7a — Desktop: optional right panel for tools (show active tool controls in a right-side panel on desktop), or Phase 7a — Delete selected clip (if backend supports), or Phase 7c — Ideas & Scripts Editor.
 
 ---
 
@@ -560,6 +560,8 @@ Structure code so that adding a new renderer does not require changing the EDL s
 | 3 | ~~**Split clip (UI + backend)**~~ | ✅ Done: Split at playhead in ContextualActionBar (video clip + playhead inside); keyboard S; 44px touch targets; EDL on Save; multi-clip supported. |
 | 4 | ~~**Overlay editing in editor**~~ | ✅ Done: Captions sheet edits text, startSec, endSec, style; add/remove overlays; Delete overlay in ContextualActionBar + Delete key; clamping; Text track “Add captions” button when empty opens Captions panel.
 | 4.5 | ~~**Preview & playhead fixes**~~ | ✅ Done: Live preview (single video, no remount at boundaries); play icon/playhead in sync; time rounded to 0.05s + onTimeUpdate at cut; TimelineTracks RAF-smoothed playhead line, snap on seek. |
+| 4.6 | ~~**EDL editor: save-on-close + Save draft**~~ | ✅ Done: Edits persist when closing (save-on-close when dirty); Save button and Ctrl+S save EDL only (no re-render); Export/Upload still does save + re-render. |
+| 4.7 | ~~**Adjust Reset button contrast**~~ | ✅ Done: Reset button text set to dark (e.g. text-gray-900) for readability on light background. |
 | 5 | **Desktop: optional right panel for tools** | On desktop, consider showing active tool controls in a right-side panel instead of (or in addition to) bottom sheet for faster access. |
 | 6 | **Delete selected clip** | If backend supports removing a clip from EDL (reflow startSec), add Delete to tool bar and Del keyboard shortcut. |
 | 7 | **Replace editor with scene-editor-main template** | Plan in §8 (Phase 7a): component mapping, EDL↔template data mapping, wiring, CSS, step-by-step replacement. Template: TopBar, VideoPreview (→ keep LivePreviewPlayer), PlaybackControls, Timeline, BottomToolbar, ClipToolbar, ExportModal, SlipMode. Keep EdlEditor shell, EDL API, live preview, slip/split/trim logic; replace layout and UI with template. |
@@ -738,6 +740,57 @@ Comparison after the scene-editor template integration. **Do not implement** fro
 **Goal:** One workflow can generate many videos from ideas stored in Google Docs or Notion; for each idea the user can review/edit the script before continuing.
 
 **Status:** Planning only (no implementation yet).
+
+---
+
+#### 7b.0 Batch Runs — Core Architecture (Prompt 1)
+
+**Scope:** Core execution architecture + data model + APIs only. Do **not** implement Review queue UI or Editor UI in this prompt.
+
+**Concepts:**
+
+| Concept | Description |
+|--------|-------------|
+| **Workflow** | Template stored once (nodes + edges + configs). |
+| **Run** | Single batch execution that can process N items (ideas). Status: queued / running / paused / completed / failed / canceled. |
+| **Iteration** | One per item from Ideas Source. Has iterationId (UUID), runId, itemIndex, itemId, title, status (queued / running / waiting / succeeded / failed / skipped). |
+| **Node Step** | One execution record per node, per iteration (inside loop) or per run (outside loop). Stores inputs, outputs, status, timestamps, error. |
+
+**Data model (DB):** See §8 Data Model — tables `runs`, `run_iterations`, `run_steps`, `run_artifacts`.
+
+**Execution engine changes:**
+
+1. **Context:** Every node receives an execution context: `runId`, `nodeId`, `iterationId?`, `item?`, `index`, `total`, variables/outputs map.
+2. **For Each:** Input `items[]` → create one `run_iterations` row per item; execute downstream nodes once per iteration; record each node execution as `run_steps` with that iterationId. MVP: sequential (index 0..N-1); design so parallel with concurrency limit can be added later.
+3. **Output addressing:** Store node outputs in `run_steps.outputsJson` with iterationId; next node in loop receives upstream outputs for the same iteration only.
+4. **Aggregation:** After loop, For Each produces one step (iterationId = null) with `outputsJson`: `{ results: [{ iterationId, itemId, title, outputsByNodeId, artifacts }] }`.
+5. **Failure:** If a node fails for one iteration: mark iteration failed; continue next iteration (default) or stop batch per For Each config `onError`: `"continue"` \| `"stop"`. Record error in `run_steps.errorJson`.
+
+**API endpoints (backend):** See §9 API Routes — GET run, GET iterations, GET iteration by id, GET steps (with optional filters), POST cancel / pause / resume.
+
+**Node contracts:**
+
+- **Ideas Source output:** `{ items: Array<{ id, title, idea?, script?, meta? }> }`.
+- **For Each input:** Accepts `{ items: [...] }` or array.
+- **Variable interpolation:** Resolver for `$item.title`, `$item.idea`, `$item.script`, `$index`, `$total`; used by all nodes inside the loop.
+
+**Tests (to add):**
+
+1. For Each creates correct number of iterations.
+2. Nodes inside loop get correct item context.
+3. Outputs stored per iteration and not mixed.
+4. Aggregated results output has N entries.
+5. Failure in one iteration does not corrupt others (mock external services: TTS, FFmpeg, S3).
+
+**Deliverables (Prompt 1):**
+
+- Iteration-aware execution across all nodes.
+- Persist run_iterations and run_steps for every iteration.
+- For Each produces aggregated results at end.
+- Run/iteration/step API endpoints implemented.
+- Code modular for adding Review Queue UI later.
+
+**Implementation order (core):** run_iterations + run_steps schema → For Each sequential execution → correct data passing per iteration → basic endpoints to inspect runs/iterations.
 
 ---
 
@@ -932,6 +985,84 @@ Comparison after the scene-editor template integration. **Do not implement** fro
 5. **Tests:** Split parsing; for_each iteration; pause/resume.
 
 **Implementation order:** Start with Manual + CSV Ideas Source, Split node, and For Each sequential loop with context passing. Then Notion database integration. Leave Google Docs stubbed with TODOs if time is limited.
+
+---
+
+#### 7b.7 Review Node UX + Edit Flow (Prompt 2)
+
+**Goal:** Implement the “Review / Approve” node experience for batch runs: Review Queue for all iterations, per-iteration actions (Preview, Edit, Approve, Skip, Regenerate Draft), approval resumes only that iteration’s downstream nodes, Edit opens editor for that iteration and saves EDL. Includes backend endpoints and frontend Review node panel only; do not redesign the whole app.
+
+**Scope:** Backend review decision storage + resume logic; review-queue and per-iteration endpoints; frontend Review Queue UI (node card badges, panel with tabs/list/actions); Edit = navigation + API wiring to open editor and save EDL (reuse existing editor).
+
+**Status (implementation progress):**
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | Backend review decision storage + resume logic | ✅ Done — RunReviewDecision table; For Each loop creates pending decision per iteration, continues other iterations, sets run WAITING_FOR_REVIEW; `decideIterationReviewAndResume` (approve → run downstream for that iteration only, skip → mark only). |
+| 2 | GET `/api/runs/:runId/review-queue` | ✅ Done — returns items (iterationId, itemIndex, title, status, decision, draftVideoUrl, voiceoverUrl, finalVideoUrl, lastUpdatedAt) and counts. |
+| 3 | Frontend Review Queue UI (panel, list, tabs) | ⬜ Not started |
+| 4 | Per-row actions (Preview, Edit, Approve, Skip, Regenerate) | ⬜ Not started |
+| 5 | Tests for review decision + resume | ✅ Done — `execution.reviewDecision.test.ts` (5 tests). |
+| — | POST decide endpoint | ✅ Done — `/api/runs/:runId/iterations/:iterationId/review/decide`. |
+| — | GET/POST editing, regenerate-draft, rerender-draft | ⬜ Not started |
+
+---
+
+##### A) Review node runtime behavior (engine)
+
+- **Per-iteration gate:** Review node runs inside the loop. For each iteration it produces a **decision**: `"pending"` | `"approved"` | `"skipped"`. Default = pending unless auto-approve.
+- **If decision == "pending":** Mark iteration as WAITING (waiting_for_review); do not run downstream nodes for that iteration; continue other iterations when possible.
+- **If decision == "approved":** Run downstream nodes (e.g. Render Final) for that iteration only; resume execution from the node after Review for that iteration only.
+- **If decision == "skipped":** Mark iteration skipped; do not run downstream for that iteration.
+- **Config:** `mode`: `"manual"` | `"auto_approve"` | `"auto_approve_after_timeout"`; `autoApproveAfterSec?`. manual ⇒ pending until user action; auto_approve ⇒ instantly approved; auto_approve_after_timeout ⇒ pending then auto-approve after timeout (delayed job per iteration).
+
+##### B) Data model updates
+
+- **Option 1 (simple):** Store in Review node’s `run_step.outputsJson`: `{ decision, notes?, edited? }`.
+- **Option 2 (recommended):** Add table **run_review_decisions**: `id`, `runId`, `iterationId`, `nodeId`, `decision`, `notes`, `edited`, `createdAt`, `updatedAt`, `decidedAt`. Also store or resolve refs to iteration artifacts: draftVideoUrl, edlUrl/edlJson, finalVideoUrl (from run_steps/run_artifacts).
+
+##### C) Backend API endpoints
+
+| Method | Route | Description |
+|--------|--------|-------------|
+| GET | `/api/runs/:runId/review-queue` | List iterations for Review: iterationId, itemIndex, title; statuses (draft ready, review decision, render status); draftVideoUrl, voiceoverUrl?, finalVideoUrl; lastUpdatedAt. |
+| POST | `/api/runs/:runId/iterations/:iterationId/review/decide` | Body: `{ decision: "approved" \| "skipped", notes?: string }`. Persist decision; if approved resume that iteration at next node; if skipped mark iteration skipped. |
+| GET | `/api/runs/:runId/iterations/:iterationId/editing` | Iteration editing payload: iterationId, title, draftVideoUrl, edlJson/edlUrl, clips[], voiceoverUrl, captionsSrtUrl?, music settings. |
+| POST | `/api/runs/:runId/iterations/:iterationId/editing/edl` | Body: `{ edlJson }`. Validate (Zod), save/upload EDL, set edited=true; optionally trigger re-render draft for that iteration. |
+| POST | `/api/runs/:runId/iterations/:iterationId/regenerate-draft` | Re-queue Auto Edit for that iteration only; reset review decision to pending. |
+| POST | `/api/runs/:runId/iterations/:iterationId/rerender-draft` | (Optional) Apply edited EDL and re-render draft for that iteration. |
+
+##### D) Frontend — Review node UI
+
+- **Node card (canvas):** Badges from review-queue: Needs Review: X, Approved: Y, Skipped: Z, Rendered: W, Failed: F.
+- **Node panel “Review Queue”:** On node click, open side panel or modal.
+  - **Header:** Run name, total items, progress (approved/rendered counts), search.
+  - **Tabs/filters:** All, Needs Review, Edited, Approved, Rendered, Skipped, Failed.
+  - **List:** One row per iteration — thumbnail, title, duration, status pill, actions: Preview, Edit, Approve, Skip, Regenerate. Optimistic updates for Approve/Skip; per-row loading spinners; optional keyboard nav.
+- **Edit:** Opens editor for that iteration (e.g. `/editor?runId=...&iterationId=...` or modal). Load payload from editing API; on save call save-EDL endpoint; return to Review Queue with row updated (Edited). Only navigation + API wiring; reuse existing editor UI.
+
+##### E) Resuming iteration execution after approval
+
+- Approving one iteration must continue the workflow **only for that iteration** from the node after Review (e.g. Render Final).
+- Store a “resume pointer” per iteration (e.g. nextNodeId in DB); on approve, enqueue execution from nextNodeId for that iterationId; downstream outputs attach to same iterationId.
+
+##### F) Tests
+
+1. Iteration enters waiting_for_review when Review decision is pending.
+2. Approve resumes only that iteration downstream.
+3. Skip marks iteration skipped and does not run Render Final for it.
+4. Regenerate resets decision to pending and re-runs auto edit for that iteration.
+5. review-queue endpoint returns correct counts and URLs.
+
+##### G) Deliverables
+
+- Review/Approve node acts as per-iteration gate (pending/approved/skipped).
+- Backend: review decision storage, review-queue and decide/editing/regenerate-draft (and optional rerender-draft) endpoints.
+- Frontend: Review Queue panel with list, tabs, per-row actions (Preview, Edit, Approve, Skip, Regenerate).
+- Approval resumes only the selected iteration.
+- Edit opens editor for that iteration and saves EDL via API.
+
+**Implementation order:** ~~(1) Backend review decision storage + resume logic~~ ✅; ~~(2) review-queue endpoint~~ ✅; ~~(3) Frontend Review Queue UI~~ ✅; ~~(4) per-row actions (approve/skip/regenerate/edit)~~ ✅; ~~(5) tests~~ ✅. Optional follow-ups: Auto Edit/Review display from iterationSteps (done); EDL save-on-close (done).
 
 ---
 
@@ -1267,6 +1398,7 @@ model Workflow {
   userId      String
   user        User              @relation(fields: [userId], references: [id])
   executions  WorkflowExecution[]
+  runs        Run[]             // batch runs (Phase 7b.0)
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 }
@@ -1293,6 +1425,128 @@ enum ExecutionStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+// ---- Batch runs (Phase 7b.0): one run processes N items via iterations ----
+
+model Run {
+  id              String    @id @default(cuid())
+  workflowId      String
+  workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status          RunStatus @default(QUEUED)
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  totalItems      Int       @default(0)
+  completedItems  Int       @default(0)
+  failedItems     Int       @default(0)
+  waitingItems    Int       @default(0)
+  skippedItems    Int       @default(0)
+  workflowSnapshotJson Json?  // optional config snapshot / workflow version
+  iterations      RunIteration[]
+  steps           RunStep[]
+  artifacts       RunArtifact[]
+  reviewDecisions RunReviewDecision[]
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+model RunIteration {
+  id          String        @id @default(uuid())
+  runId       String
+  run         Run           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  itemIndex   Int
+  itemId      String
+  title       String
+  payloadJson Json          // full item: { id, title, idea, script?, meta? }
+  status      IterationStatus @default(QUEUED)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  steps       RunStep[]
+  artifacts   RunArtifact[]
+  reviewDecisions RunReviewDecision[]
+
+  @@index([runId])
+}
+
+enum IterationStatus {
+  QUEUED
+  RUNNING
+  WAITING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+model RunStep {
+  id           String    @id @default(uuid())
+  runId        String
+  run          Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  iterationId  String?   // null = step outside loop
+  iteration    RunIteration? @relation(fields: [iterationId], references: [id], onDelete: SetNull)
+  nodeId       String
+  nodeType     String
+  status       StepStatus @default(QUEUED)
+  attempt      Int       @default(1)
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  inputsJson   Json?
+  outputsJson  Json?
+  errorJson    Json?
+
+  @@index([runId])
+  @@index([iterationId])
+}
+
+enum StepStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  WAITING
+  SKIPPED
+}
+
+model RunArtifact {
+  id           String    @id @default(uuid())
+  runId        String
+  run          Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  iterationId  String?   // null = artifact outside loop
+  iteration    RunIteration? @relation(fields: [iterationId], references: [id], onDelete: SetNull)
+  type         String    // audio | draft_video | final_video | edl | subtitle | image | other
+  url          String
+  metaJson     Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([runId])
+  @@index([iterationId])
+}
+
+// Phase 7b.7 — Review node per-iteration decisions
+model RunReviewDecision {
+  id          String   @id @default(uuid())
+  runId       String
+  run         Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  iterationId String
+  iteration   RunIteration @relation(fields: [iterationId], references: [id], onDelete: Cascade)
+  nodeId      String
+  decision    String   // pending | approved | skipped
+  notes       String?
+  edited      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  decidedAt   DateTime?
+
+  @@unique([runId, iterationId, nodeId])
+  @@index([runId])
+  @@index([iterationId])
 }
 
 model ApiKey {
@@ -1345,6 +1599,15 @@ model ReviewSession {
 │ password │       │ status       │       │ logs (JSON)         │
 │ role     │       │ nodes (JSON) │       │ startedAt           │
 └────┬─────┘       │ edges (JSON) │       │ completedAt         │
+     │             └──────┬───────┘       └─────────────────────┘
+     │                    │
+     │                    │ 1:N (Phase 7b.0)
+     │                    ▼
+     │             ┌──────────────┐       ┌─────────────────────┐
+     │             │     Run      │──1:N──│   RunIteration      │
+     │             │ (batch run)  │       │   RunStep           │
+     │             │ status, etc. │       │   RunArtifact       │
+     │             │              │       │   RunReviewDecision │
      │             └──────────────┘       └─────────────────────┘
      │
      │1:N
@@ -1381,6 +1644,29 @@ model ReviewSession {
 | POST   | `/api/workflows/:id/execute`       | Execute a workflow      | Required |
 | GET    | `/api/workflows/:id/executions`    | Get execution history   | Required |
 | POST   | `/api/workflows/:id/executions/:execId/steps/:stepId/resolve-review` | Resolve approval gate (approve or edit EDL); body: `{ action, approvedEdl? }` | Required |
+
+### Runs / Iterations / Steps (Phase 7b.0 — Batch runs)
+
+| Method | Route | Description | Auth |
+|--------|--------|-------------|------|
+| GET    | `/api/runs/:runId` | Run summary + counters | Required |
+| GET    | `/api/runs/:runId/iterations` | List iterations (status, title, itemIndex) | Required |
+| GET    | `/api/runs/:runId/iterations/:iterationId` | Iteration payload + all run_steps for that iteration + artifacts | Required |
+| GET    | `/api/runs/:runId/steps` | List steps (optional query: iterationId, nodeId, status) | Required |
+| POST   | `/api/runs/:runId/cancel` | Cancel the run | Required |
+| POST   | `/api/runs/:runId/pause` | Pause the run (MVP may be coarse) | Required |
+| POST   | `/api/runs/:runId/resume` | Resume a paused run | Required |
+
+### Review Queue / per-iteration actions (Phase 7b.7)
+
+| Method | Route | Description | Auth |
+|--------|--------|-------------|------|
+| GET    | `/api/runs/:runId/review-queue` | List iterations for Review: iterationId, itemIndex, title; statuses; draftVideoUrl, voiceoverUrl?, finalVideoUrl; lastUpdatedAt. | Required |
+| POST   | `/api/runs/:runId/iterations/:iterationId/review/decide` | Body: `{ decision: "approved" \| "skipped", notes?: string }`. Persist decision; if approved resume that iteration at next node; if skipped mark iteration skipped. | Required |
+| GET    | `/api/runs/:runId/iterations/:iterationId/editing` | Iteration editing payload (title, draftVideoUrl, edlJson/edlUrl, clips[], voiceoverUrl, captionsSrtUrl?, music). | Required |
+| POST   | `/api/runs/:runId/iterations/:iterationId/editing/edl` | Body: `{ edlJson }`. Validate (Zod), save/upload EDL, set edited=true; optionally trigger re-render draft. | Required |
+| POST   | `/api/runs/:runId/iterations/:iterationId/regenerate-draft` | Re-queue Auto Edit for that iteration only; reset review decision to pending. | Required |
+| POST   | `/api/runs/:runId/iterations/:iterationId/rerender-draft` | (Optional) Apply edited EDL and re-render draft for that iteration. | Required |
 
 ### Settings
 

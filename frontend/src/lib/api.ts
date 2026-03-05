@@ -267,4 +267,54 @@ export const rendersApi = {
     api.get<RenderStatus>(`/renders/${jobId}/status`),
 };
 
+/** Phase 7b.7: Review queue for batch runs */
+export interface ReviewQueueItem {
+  iterationId: string;
+  itemIndex: number;
+  title: string;
+  status: "needs_review" | "approved" | "skipped" | "rendered" | "failed";
+  decision: "pending" | "approved" | "skipped" | null;
+  draftVideoUrl: string | null;
+  voiceoverUrl: string | null;
+  finalVideoUrl: string | null;
+  /** Project ID for opening the EDL editor for this iteration (when draft exists). */
+  projectId: string | null;
+  /** When status is failed: error message from the failing step. */
+  errorMessage: string | null;
+  /** When status is failed: title of the node that failed. */
+  failedNodeTitle: string | null;
+  lastUpdatedAt: string;
+}
+
+export interface ReviewQueueResponse {
+  runId: string;
+  runStatus: string;
+  workflowName?: string;
+  totalItems: number;
+  items: ReviewQueueItem[];
+  counts: {
+    needsReview: number;
+    approved: number;
+    skipped: number;
+    rendered: number;
+    failed: number;
+  };
+}
+
+export const runsApi = {
+  getReviewQueue: (runId: string) =>
+    api.get<ReviewQueueResponse>(`/runs/${runId}/review-queue`),
+  decideReview: (
+    runId: string,
+    iterationId: string,
+    body: { decision: "approved" | "skipped"; notes?: string }
+  ) =>
+    api.post<unknown>(
+      `/runs/${runId}/iterations/${iterationId}/review/decide`,
+      body
+    ),
+  regenerateDraft: (runId: string, iterationId: string) =>
+    api.post<unknown>(`/runs/${runId}/iterations/${iterationId}/regenerate-draft`),
+};
+
 export { ApiError };

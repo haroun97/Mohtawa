@@ -2,8 +2,8 @@
 
 ## AI Content Automation Workflow Platform
 
-**Version:** 1.3
-**Date:** February 26, 2026
+**Version:** 1.5
+**Date:** March 5, 2026
 **Status:** Approved
 
 ---
@@ -70,15 +70,23 @@ Nodes are categorized into the following groups:
 | **Ideas**   | **Ideas Source** (Manual, CSV, **In-app Editor**, Notion, Google Docs) |
 | **Text**    | **Split into Items** (headings, bullets, separator) |
 | **Script**  | **Write Script** (AI draft + manual edit; supports loop context) |
+| **Review**  | **Review/Approve** (per-iteration gate: pending/approved/skipped; Review Queue UI for batch runs) |
 
 ### 3.5 Ideas List + Loop (Option B)
 
 One workflow can generate many videos from a list of ideas. The user can review or edit the script for each idea before the workflow continues.
 
+#### 3.5.0 Run, Iteration, and Step Model (Batch Runs)
+
+- **Workflow (template):** Stored once as a graph (nodes + edges + configs). Not recreated per idea.
+- **Run (batch execution):** A single run can process N items (ideas). Run has status: `queued` | `running` | `paused` | `completed` | `failed` | `canceled`.
+- **Iteration:** Each item from the Ideas Source (or upstream) becomes one iteration. An iteration has: `iterationId` (UUID), `runId`, `itemIndex`, `itemId`, `title`, `status`. Iteration status: `queued` | `running` | `waiting` | `succeeded` | `failed` | `skipped`.
+- **Node Step (execution unit):** Every node execution is recorded either per iteration (when inside a loop) or per run (when outside the loop). Each step stores: inputs, outputs, status, timestamps, attempt, and error when applicable.
+
 #### 3.5.1 Ideas Source node (`ideas.source`)
 
 - **Providers (MVP order):** Manual list, CSV upload, **In-app Editor**, Notion database/page, Google Docs (later).
-- **Output (standard):** `{ items: Array<{ id, title, idea, meta? }> }`.
+- **Output (standard):** `{ items: Array<{ id: string, title: string, idea?: string, script?: string, meta?: object }> }` (Ideas Source node output contract).
 - **Output (In-app Editor):** `{ items: Array<{ id, title, ideaText, scriptText, rawBlocks, meta }> }` when reading from an Ideas & Scripts document.
 - **Manual mode:** Multiline textarea (one idea per line) or JSON array.
 - **CSV mode:** File upload and column selection for idea text.
@@ -94,11 +102,13 @@ One workflow can generate many videos from a list of ideas. The user can review 
 
 #### 3.5.3 For Each node (`flow.for_each`)
 
-- **Input:** `items[]` from Ideas Source or Split node.
-- **Behavior:** Executes downstream nodes once per item in sequence (MVP; parallel “coming soon”).
-- **Context variables per iteration:** `$item` (current item), `$index`, `$total`.
-- **Manual review:** When a downstream node (e.g. Write Script) is in manual mode, the run pauses until the user clicks “Continue”; paused state is stored and resumable.
-- **Output:** Aggregated `{ results: [{ itemId, outputsByNodeId, finalVideoUrl? }] }`.
+- **Input:** `items[]` from Ideas Source or Split node (or an array directly if the engine supports it).
+- **Behavior:** Creates one **iteration** per item (persisted as run_iterations). Executes downstream nodes once per item in sequence (MVP; parallel with concurrency limit is a later phase).
+- **Context variables per iteration:** `$item` (current item), `$index`, `$total`. Nodes inside the loop must be able to reference `$item.title`, `$item.idea`, `$item.script`; implement a variable interpolation resolver used by all nodes.
+- **Per-iteration persistence:** Every node inside the loop records a **run_step** per iteration (run_steps linked to iterationId). Outputs are stored per iteration so downstream nodes receive the correct upstream outputs for the same iteration.
+- **Aggregation after loop:** When the loop finishes, the For Each node produces a single aggregated output (stored as the For Each node’s run_step with iterationId = null): `{ results: [{ iterationId, itemId, title, outputsByNodeId: { … }, artifacts: [ … ] }] }`.
+- **Failure handling:** Config `onError`: `"continue"` (default) — mark failed iteration, continue with next; `"stop"` — stop the batch. Errors are recorded in run_steps.errorJson.
+- **Manual review:** When a downstream node (e.g. Write Script) is in manual mode, the run can pause until the user clicks “Continue”; paused state is stored and resumable.
 - **UI:** Progress (e.g. 3/12), sequential/parallel toggle (parallel disabled in MVP), stop/cancel.
 
 #### 3.5.4 Write Script node (`script.write`)
@@ -109,14 +119,76 @@ One workflow can generate many videos from a list of ideas. The user can review 
 - **Output:** `{ title, idea, script, language?, style?, captions?: boolean }`.
 - **UI:** Show current idea title; rich text or textarea (MVP); Generate with AI toggle.
 
+#### 3.5.5 Review/Approve node (batch runs)
+
+The Review/Approve node runs **inside the loop** (per iteration) and acts as a per-iteration decision gate. It does not redesign the whole app; only the Review node panel and related per-iteration actions are in scope.
+
+- **Runtime behavior:** For each iteration, the node produces a **decision**: `"pending"` (needs review), `"approved"`, or `"skipped"`. Default is `"pending"` unless configured to auto-approve.
+- **Engine behavior:**
+  - If decision is **pending:** mark that iteration as `waiting` (e.g. waiting_for_review); do **not** run downstream nodes (e.g. Render Final) for that iteration; continue processing other iterations when possible.
+  - If **approved:** allow downstream nodes to execute for that iteration only; approving one iteration resumes execution **only for that iteration** from the node after Review (e.g. Render Final).
+  - If **skipped:** mark iteration as skipped and do not run downstream nodes for that iteration.
+- **Configuration:** `mode`: `"manual"` | `"auto_approve"` | `"auto_approve_after_timeout"`; optional `autoApproveAfterSec` when timeout mode is used. **manual** ⇒ pending until user approves/skips; **auto_approve** ⇒ instantly approved; **auto_approve_after_timeout** ⇒ pending, then auto-approve after timeout if no user action. Timeout can be implemented via a delayed job per iteration that checks decision is still pending then approves.
+- **Output:** Pass-through of approved EDL (or original/updated draft) for downstream Render Final; decision and metadata are persisted (see §3.6.3).
+
 ### 3.6 Workflow Execution Engine
 
 - Sequential and parallel node execution.
-- **Loop execution (For Each):** Run downstream nodes once per item; pass iteration context (`$item`, `$index`, `$total`); aggregate results into `results[]`.
+- **Execution context:** Every node receives an execution context object: `runId`, `nodeId`, `iterationId?` (null when outside loop), `item?` (current item for this iteration), `index`, `total`, and a variables/outputs map for upstream data. This context is used for variable interpolation and per-iteration output addressing.
+- **Loop execution (For Each):** For Each creates run_iterations rows for each input item. Downstream nodes execute once per iteration; each execution is recorded as a run_step with the corresponding iterationId. Pass iteration context (`$item`, `$index`, `$total`); store outputs per iteration in run_steps.outputsJson; aggregate results into `results[]` at loop end (For Each step with iterationId = null).
+- **Node output addressing:** Outputs from nodes inside the loop are stored in run_steps with iterationId. The next node in the loop receives upstream outputs for the same iteration only.
 - **Manual review gating:** Pause run when a node (e.g. Write Script) requires user action; store paused state; resume via “Continue” (see §3.5.3, §3.5.4).
-- Logging of each node's input, output, and status.
+- **Logging and persistence:** Each node execution is logged as a run_step (inputsJson, outputsJson, status, timestamps, attempt, errorJson). Steps outside the loop have iterationId = null.
 - Retry capability with configurable retry count and backoff.
-- Error handling with fallback paths.
+- Error handling with fallback paths; For Each supports configurable onError (continue vs stop batch).
+- **Concurrency (future):** Architecture must allow later running iterations in parallel with a concurrency limit; MVP implements sequential execution only.
+
+#### 3.6.1 Run and iteration data persistence
+
+The system shall persist batch run data as follows:
+
+- **runs:** `id`, `workflowId`, `status`, `createdAt`, `startedAt`, `finishedAt`; totals: `totalItems`, `completedItems`, `failedItems`, `waitingItems`, `skippedItems`; optional config snapshot (workflow version or workflowSnapshotJson).
+- **run_iterations:** `id` (UUID), `runId`, `itemIndex`, `itemId`, `title`, `payloadJson` (full item: id, title, idea, …), `status`, `createdAt`, `updatedAt`.
+- **run_steps:** `id` (UUID), `runId`, `iterationId` (nullable; null = step outside loop), `nodeId`, `nodeType`, `status` (e.g. queued/running/succeeded/failed/waiting/skipped), `attempt`, `startedAt`, `finishedAt`, `inputsJson`, `outputsJson`, `errorJson`.
+- **run_artifacts (optional):** `id`, `runId`, `iterationId` (nullable), `type` (e.g. audio, draft_video, final_video, edl, subtitle, image, other), `url`, `metaJson`, `createdAt`.
+- **run_review_decisions (recommended for Review node):** `id`, `runId`, `iterationId`, `nodeId`, `decision` (pending | approved | skipped), `notes`, `edited` (boolean), `createdAt`, `updatedAt`, `decidedAt`. Optionally store references to iteration artifacts (draftVideoUrl, edlUrl or edlJson, finalVideoUrl) in this table or resolve from run_steps/run_artifacts.
+
+#### 3.6.2 Run and iteration APIs
+
+The system shall provide API endpoints to support batch run inspection and control (no Review queue or Editor UI required for core architecture):
+
+- **GET** `/api/runs/:runId` — run summary and counters.
+- **GET** `/api/runs/:runId/iterations` — list iterations with status, title, itemIndex.
+- **GET** `/api/runs/:runId/iterations/:iterationId` — iteration payload, all run_steps for that iteration, and artifacts.
+- **GET** `/api/runs/:runId/steps` — list steps (optional filter by iterationId, nodeId, status).
+- **POST** `/api/runs/:runId/cancel` — cancel the run.
+- **POST** `/api/runs/:runId/pause` — pause the run (MVP may be coarse).
+- **POST** `/api/runs/:runId/resume` — resume a paused run.
+
+#### 3.6.3 Review Queue and per-iteration action APIs
+
+The system shall provide API endpoints to power the Review Queue UI and per-iteration actions:
+
+- **GET** `/api/runs/:runId/review-queue` — list iterations for the Review node: iterationId, itemIndex, title; statuses (draft ready, review decision, render status); draftVideoUrl (thumbnail/preview), voiceoverUrl (optional), finalVideoUrl if rendered; lastUpdatedAt.
+- **POST** `/api/runs/:runId/iterations/:iterationId/review/decide` — body: `{ decision: "approved" | "skipped", notes?: string }`. Persist decision; if approved, resume that iteration’s execution at the next node after Review only; if skipped, mark iteration skipped.
+- **GET** `/api/runs/:runId/iterations/:iterationId/editing` — return iteration editing payload: iterationId, title, draftVideoUrl, edlJson (or edlUrl), clips[], voiceoverUrl, captionsSrtUrl?, music settings.
+- **POST** `/api/runs/:runId/iterations/:iterationId/editing/edl` — body: `{ edlJson }`. Validate EDL (Zod); save to DB and/or upload to S3; mark edited=true; optionally trigger re-render draft for that iteration.
+- **POST** `/api/runs/:runId/iterations/:iterationId/regenerate-draft` — re-queue Auto Edit for that iteration only; reset review decision to pending.
+- **POST** `/api/runs/:runId/iterations/:iterationId/rerender-draft` (optional) — apply edited EDL and re-render draft for that iteration.
+
+**Resuming after approval:** Approving one iteration must continue the workflow **only for that iteration** from the node after Review (e.g. Render Final). Implementation may store a resume pointer (e.g. nextNodeId) per iteration and enqueue execution starting at that node for that iteration when approved; downstream node outputs attach to the same iterationId.
+
+### 3.13 Review Queue UI (Batch Runs)
+
+Scope is limited to the Review/Approve node experience and related per-iteration actions; do not redesign the whole app.
+
+- **Node card (canvas):** When the Review/Approve node is present, show summary badges derived from the review-queue data: Needs Review: X, Approved: Y, Skipped: Z, Rendered: W, Failed: F.
+- **Node panel — “Review Queue”:** When the user selects the Review/Approve node, open a side panel (or modal) that shows:
+  - **Header:** Run name, total items, progress (e.g. approved/rendered counts), search input.
+  - **Tabs/filters:** All, Needs Review, Edited, Approved, Rendered, Skipped, Failed.
+  - **List view:** One row per iteration. Each row: thumbnail (draft preview), title (idea), duration if known, status pill (Needs review / Approved / Rendered / Failed), and actions: **Preview** (inline or modal), **Edit**, **Approve**, **Skip**, **Regenerate**.
+  - **UX:** Approve/Skip update the row optimistically where feasible; show per-row loading spinners when actions are in progress; optional keyboard navigation.
+- **Edit behavior:** “Edit” opens the editor for that iteration (e.g. route `/editor?runId=...&iterationId=...` or an Editor modal). The editor loads the iteration editing payload from the API; on save (EDL), it calls the save-EDL endpoint and returns to the Review Queue with that row updated (e.g. status “Edited”). Only navigation and API wiring to open editor and save EDL are required; the existing editor UI is reused, not redesigned.
 
 ### 3.7 Scheduling System
 

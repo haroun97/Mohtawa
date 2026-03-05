@@ -52,7 +52,7 @@ export function AdjustSheetContent({
           onValueChange={([v]) => onEdlChange({ color: { ...color, vibrance: v } })}
         />
       </div>
-      <Button variant="outline" onClick={() => onEdlChange({ color: { ...DEFAULT_COLOR } })} className="w-full">
+      <Button variant="outline" onClick={() => onEdlChange({ color: { ...DEFAULT_COLOR } })} className="w-full text-gray-900 dark:text-gray-900">
         Reset
       </Button>
     </div>

@@ -1,5 +1,5 @@
 import { useState, type RefObject } from 'react';
-import { X, Loader2, Upload, ChevronDown } from 'lucide-react';
+import { X, Loader2, Upload, ChevronDown, Save } from 'lucide-react';
 import { ExportModal, type ExportOptions, type ExportResolution, type ExportFps } from './ExportModal';
 
 interface EditorTopBarProps {
@@ -7,8 +7,11 @@ interface EditorTopBarProps {
   resolution?: string;
   initialExportResolution?: ExportResolution;
   initialExportFps?: ExportFps;
-  onClose: () => void;
+  onClose: () => void | Promise<void>;
   onExport: (options?: ExportOptions) => void | Promise<void>;
+  onSaveDraft?: () => void | Promise<void>;
+  dirty?: boolean;
+  savingDraft?: boolean;
   exportDisabled?: boolean;
   exporting?: boolean;
   exportProgress?: number;
@@ -36,6 +39,9 @@ export function EditorTopBar({
   initialExportFps,
   onClose,
   onExport,
+  onSaveDraft,
+  dirty = false,
+  savingDraft = false,
   exportDisabled = false,
   exporting = false,
   exportProgress = 0,
@@ -56,13 +62,27 @@ export function EditorTopBar({
     }
   };
 
+  const handleClose = () => {
+    const result = onClose();
+    if (result != null && typeof (result as Promise<void>).then === 'function') {
+      (result as Promise<void>).catch(() => {});
+    }
+  };
+
+  const handleSaveDraftClick = () => {
+    const result = onSaveDraft?.();
+    if (result != null && typeof (result as Promise<void>).then === 'function') {
+      (result as Promise<void>).catch(() => {});
+    }
+  };
+
   return (
     <>
       <header className="flex items-center justify-between px-4 py-3 bg-editor-bg-immersive flex-shrink-0 min-h-[48px] border-b border-border/30">
         <button
           ref={closeButtonRef}
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           className="w-9 h-9 flex items-center justify-center rounded-full text-muted-foreground hover:bg-editor-surface hover:text-foreground transition-colors min-w-[44px] min-h-[44px] md:min-w-9 md:min-h-9"
           aria-label="Close"
         >
@@ -80,6 +100,23 @@ export function EditorTopBar({
         </button>
 
         <div className="flex items-center gap-2">
+          {onSaveDraft && (
+            <button
+              type="button"
+              onClick={handleSaveDraftClick}
+              disabled={!dirty || savingDraft || exporting}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-editor-surface text-xs font-semibold text-white/90 disabled:opacity-50 disabled:pointer-events-none min-w-[44px] min-h-[36px] justify-center"
+              aria-label="Save"
+              title="Save edits (Ctrl+S)"
+            >
+              {savingDraft ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Save size={14} />
+              )}
+              <span className="hidden sm:inline">Save</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={handleExportClick}

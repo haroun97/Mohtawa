@@ -45,6 +45,11 @@ interface ApiStepLog {
   output?: Record<string, unknown>;
   error?: string;
   reviewSessionId?: string;
+  iterationSteps?: Array<{
+    iteration: number;
+    itemTitle?: string;
+    steps: Array<{ nodeId: string; nodeTitle: string; status: string; output?: Record<string, unknown>; error?: string }>;
+  }>;
 }
 
 function findDef(type: string) {
@@ -135,6 +140,8 @@ function executionToRunLog(exec: ApiExecution): RunLog {
     completedAt: log.completedAt,
     output: log.output,
     error: log.error,
+    reviewSessionId: log.reviewSessionId,
+    iterationSteps: log.iterationSteps,
   }));
   return {
     id: exec.id,
@@ -178,7 +185,7 @@ interface WorkflowState {
   /** Node currently being run via Test node (shows spinner on that node). */
   testingNodeId: string | null;
   saveStatus: 'saved' | 'saving' | 'unsaved';
-  inspectorTab: 'config' | 'logs';
+  inspectorTab: 'config' | 'logs' | 'queue';
   isLoading: boolean;
   executionPollingId: string | null;
 
@@ -197,7 +204,7 @@ interface WorkflowState {
   // Local state actions
   setActiveWorkflow: (id: string) => void;
   selectNode: (id: string | null) => void;
-  setInspectorTab: (tab: 'config' | 'logs') => void;
+  setInspectorTab: (tab: 'config' | 'logs' | 'queue') => void;
 
   addNode: (node: WorkflowNode) => void;
   updateNodeConfig: (nodeId: string, config: Record<string, any>) => void;
@@ -746,6 +753,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
               output: log.output,
               error: log.error,
               reviewSessionId: log.reviewSessionId,
+              iterationSteps: log.iterationSteps,
             }));
 
             const runStatus: RunStatus =

@@ -37,25 +37,17 @@ interface ReviewDraftEntry {
 
 function collectReviewDrafts(
   nodeId: string,
-  runLog: { id: string; steps: Array<{ nodeId: string; output?: Record<string, unknown>; iterationSteps?: Array<{ iteration: number; itemTitle?: string; steps: Array<{ nodeId: string; output?: Record<string, unknown> }> }> }> } | null
+  runLog: { id: string; steps: Array<{ nodeId: string; nodeTitle?: string; output?: Record<string, unknown>; iterationSteps?: Array<{ iteration: number; itemTitle?: string; steps: Array<{ nodeId: string; output?: Record<string, unknown> }> }> }> } | null,
+  upstreamNodeIds: string[] = []
 ): ReviewDraftEntry[] {
-  if (!runLog) {
-    console.log('[Review drafts DEBUG] no runLog');
-    return [];
-  }
+  if (!runLog) return [];
   const drafts: ReviewDraftEntry[] = [];
   const hasAnyIterations = runLog.steps.some((s) => (s.iterationSteps?.length ?? 0) > 0);
-  console.log('[Review drafts DEBUG] runLog.id:', runLog.id, 'steps.length:', runLog.steps?.length, 'hasAnyIterations:', hasAnyIterations, 'reviewNodeId:', nodeId);
-  runLog.steps?.forEach((s, i) => {
-    console.log('[Review drafts DEBUG] step', i, 'nodeId:', s.nodeId, 'iterationSteps?.length:', s.iterationSteps?.length, 'output?.draftVideoUrl:', typeof (s.output as Record<string, unknown>)?.draftVideoUrl);
-  });
   if (hasAnyIterations) {
     for (const step of runLog.steps) {
       for (const iter of step.iterationSteps ?? []) {
         const reviewSub = iter.steps.find((s) => s.nodeId === nodeId);
-        const hasDraft = reviewSub?.output && typeof (reviewSub.output as Record<string, unknown>).draftVideoUrl === 'string';
-        console.log('[Review drafts DEBUG] iter', iter.iteration, 'itemTitle:', iter.itemTitle, 'reviewSub found:', !!reviewSub, 'hasDraft:', hasDraft);
-        if (hasDraft) {
+        if (reviewSub?.output && typeof (reviewSub.output as Record<string, unknown>).draftVideoUrl === 'string') {
           drafts.push({
             executionId: runLog.id,
             stepId: nodeId,
@@ -76,8 +68,19 @@ function collectReviewDrafts(
         });
       }
     }
+    if (drafts.length === 0 && upstreamNodeIds.length > 0) {
+      for (const step of runLog.steps) {
+        if (upstreamNodeIds.includes(step.nodeId) && step.output && typeof (step.output as Record<string, unknown>).draftVideoUrl === 'string') {
+          drafts.push({
+            executionId: runLog.id,
+            stepId: nodeId,
+            stepOutput: step.output as Record<string, unknown>,
+            label: step.nodeTitle ? `Draft (from ${step.nodeTitle})` : 'Draft',
+          });
+        }
+      }
+    }
   }
-  console.log('[Review drafts DEBUG] collected drafts count:', drafts.length, 'labels:', drafts.map((d) => d.label));
   return drafts;
 }
 
@@ -91,14 +94,16 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
   const isIdeasSource = definition.type === 'ideas.source';
   const [reviewModalDraft, setReviewModalDraft] = useState<ReviewDraftEntry | null>(null);
   const logForDrafts = runLog ?? lastCompletedRunLog ?? null;
+  const workflow = getActiveWorkflow();
+  const upstreamNodeIds = useMemo(() => {
+    if (!isReviewNode || !workflow?.edges) return [];
+    return workflow.edges.filter((e) => e.target === node.id).map((e) => e.source);
+  }, [isReviewNode, workflow?.edges, node.id]);
   const reviewDrafts = useMemo(
-    () => (isReviewNode && logForDrafts ? collectReviewDrafts(node.id, logForDrafts) : []),
-    [isReviewNode, node.id, logForDrafts]
+    () => (isReviewNode && logForDrafts ? collectReviewDrafts(node.id, logForDrafts, upstreamNodeIds) : []),
+    [isReviewNode, node.id, logForDrafts, upstreamNodeIds]
   );
-  if (isReviewNode) {
-    console.log('[Review drafts DEBUG] logForDrafts source:', runLog ? 'runLog' : lastCompletedRunLog ? 'lastCompletedRunLog' : 'none', 'reviewDrafts.length:', reviewDrafts.length);
-  }
-  const workflowId = getActiveWorkflow()?.id ?? '';
+  const workflowId = workflow?.id ?? '';
   const { data: ideaDocs = [] } = useQuery({
     queryKey: ['idea-docs'],
     queryFn: () => ideaDocsApi.list(false),
@@ -125,7 +130,9 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
     lastCompletedRunLog?.steps?.find((s) => s.nodeId === node.id);
   const lastOutput = lastRunStep?.output as Record<string, unknown> | undefined;
   const showLastRunAudio = isPreviewOutput && lastOutput && hasPlayableAudio(lastOutput);
-  const reviewProjectId = isReviewNode && lastOutput && typeof lastOutput.projectId === 'string' ? lastOutput.projectId : undefined;
+  const reviewProjectId = isReviewNode
+    ? (typeof lastOutput?.projectId === 'string' ? lastOutput.projectId : typeof reviewDrafts[0]?.stepOutput?.projectId === 'string' ? reviewDrafts[0].stepOutput.projectId as string : undefined)
+    : undefined;
   const clipUploadRef = useRef<HTMLInputElement>(null);
   const [clipUploading, setClipUploading] = useState(false);
   const [clipUploadError, setClipUploadError] = useState<string | null>(null);
@@ -416,9 +423,16 @@ export function NodeConfigForm({ node, onOpenEdlEditor }: Props) {
           className="w-full gap-1.5 text-xs"
           disabled={!reviewProjectId}
           onClick={() => reviewProjectId && onOpenEdlEditor(reviewProjectId)}
-          title={reviewProjectId ? 'Open video editor for this project' : 'Run the workflow to get a draft, then edit'}
+          title={
+            reviewProjectId
+              ? reviewDrafts.length > 1
+                ? 'Open video editor for the first draft (use Queue tab to edit a specific item)'
+                : 'Open video editor for this project'
+              : 'Run the workflow to get a draft, then edit'
+          }
         >
-          <Edit3 className="h-3 w-3" /> Edit draft
+          <Edit3 className="h-3 w-3" />
+          {reviewDrafts.length > 1 ? 'Edit first draft' : 'Edit draft'}
         </Button>
       )}
 

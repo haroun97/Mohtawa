@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { AudioPlayer } from './AudioPlayer';
 import { hasPlayableAudio } from '@/lib/audioPlayback';
 import { hasFinalVideoOutput, getFinalVideoDownloadUrl, triggerVideoDownload } from '@/lib/videoDownload';
+import { getDisplayFromIterationSteps } from '@/lib/runLogIterationSteps';
 import { ReviewModal } from './ReviewModal';
 
 const statusIcon: Record<string, React.ReactNode> = {
@@ -83,7 +84,12 @@ export function RunLogs() {
 
       <div className="space-y-1">
         <AnimatePresence>
-          {visibleSteps.map((step, i) => (
+          {visibleSteps.map((step, i) => {
+            const effective = getDisplayFromIterationSteps(runLog, step.nodeId);
+            const displayStep = effective
+              ? { ...step, status: effective.status, output: effective.output, error: effective.error }
+              : step;
+            return (
             <motion.div
               key={`${runLog.id}-${step.nodeId}`}
               initial={{ opacity: 0, y: 8 }}
@@ -95,8 +101,8 @@ export function RunLogs() {
                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent/50 transition-colors text-left"
                 onClick={() => toggleStep(step.nodeId)}
               >
-                {statusIcon[step.status] ?? statusIcon.idle}
-                <span className="text-xs font-medium flex-1 truncate">{step.nodeTitle}</span>
+                {statusIcon[displayStep.status] ?? statusIcon.idle}
+                <span className="text-xs font-medium flex-1 truncate">{displayStep.nodeTitle}</span>
                 <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${expandedSteps.has(step.nodeId) ? 'rotate-180' : ''}`} />
               </button>
 
@@ -109,12 +115,12 @@ export function RunLogs() {
                     className="overflow-hidden"
                   >
                     <div className="px-3 pb-2 space-y-1.5">
-                      {step.status === 'waiting_review' && step.output && (
+                      {displayStep.status === 'waiting_review' && displayStep.output && (
                         <div className="mb-2">
                           <Button
                             size="sm"
                             className="gap-1.5 text-xs"
-                            onClick={() => setReviewStep({ stepId: step.nodeId, output: step.output as Record<string, unknown> })}
+                            onClick={() => setReviewStep({ stepId: step.nodeId, output: displayStep.output as Record<string, unknown> })}
                           >
                             <ClipboardCheck className="h-3.5 w-3.5" /> Review draft
                           </Button>
@@ -163,8 +169,8 @@ export function RunLogs() {
                       )}
                       {(() => {
                         const stepWithVideo =
-                          step.output && hasFinalVideoOutput(step.output as Record<string, unknown>)
-                            ? step
+                          displayStep.output && hasFinalVideoOutput(displayStep.output as Record<string, unknown>)
+                            ? displayStep
                             : lastCompletedRunLog?.steps?.find(
                                 (s) => s.nodeId === step.nodeId && s.output && hasFinalVideoOutput(s.output as Record<string, unknown>)
                               );
@@ -233,7 +239,7 @@ export function RunLogs() {
                             <div>
                               <p className="text-[10px] font-semibold text-muted-foreground mb-1">Output</p>
                               <pre className="text-[10px] bg-muted/50 rounded p-2 overflow-x-auto">
-                                {JSON.stringify(step.output, null, 2)}
+                                {JSON.stringify(displayStep.output, null, 2)}
                               </pre>
                             </div>
                           </div>
@@ -253,7 +259,7 @@ export function RunLogs() {
                           </Button>
                         </div>
                       )}
-                      {!step.output && !step.error && step.status === 'idle' && (
+                      {!displayStep.output && !displayStep.error && displayStep.status === 'idle' && (
                         <p className="text-[10px] text-muted-foreground italic">Queued</p>
                       )}
                     </div>
@@ -261,7 +267,8 @@ export function RunLogs() {
                 )}
               </AnimatePresence>
             </motion.div>
-          ))}
+            );
+          })}
         </AnimatePresence>
       </div>
 

@@ -28,8 +28,11 @@ interface EditorPageProps {
   /** Resolved playable URL for voiceover (S3 → presigned). Used for waveform. */
   resolvedAudioUrl?: string | null;
   onEdlChange: (patch: Partial<EDL> | ((prev: EDL) => EDL)) => void;
-  onClose: () => void;
+  onClose: () => void | Promise<void>;
   onExport: (options?: import('./ExportModal').ExportOptions) => void;
+  onSaveDraft?: () => void | Promise<void>;
+  dirty?: boolean;
+  savingDraft?: boolean;
   exportDisabled?: boolean;
   exporting?: boolean;
   exportProgress?: number;
@@ -60,6 +63,9 @@ export function EditorPage({
   onEdlChange,
   onClose,
   onExport,
+  onSaveDraft,
+  dirty = false,
+  savingDraft = false,
   exportDisabled = false,
   exporting = false,
   exportProgress = 0,
@@ -290,6 +296,9 @@ export function EditorPage({
         initialExportFps={initialExportFps}
         onClose={onClose}
         onExport={onExport}
+        onSaveDraft={onSaveDraft}
+        dirty={dirty}
+        savingDraft={savingDraft}
         exportDisabled={exportDisabled}
         exporting={exporting}
         exportProgress={exportProgress}

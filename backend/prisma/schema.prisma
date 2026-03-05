@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
@@ -135,4 +136,22 @@ model ReviewSession {
   @@unique([runId, stepId])
   @@index([runId])
   @@index([status])
+}
+
+// Phase 7b.7: per-iteration review decisions (runId = executionId when Run table absent)
+model RunReviewDecision {
+  id         String   @id @default(cuid())
+  runId      String   // workflow execution id
+  iterationId String  // itemId from For Each loop
+  nodeId     String   // review node id
+  decision   String   @default("pending") // pending | approved | skipped
+  notes      String?
+  edited     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  decidedAt  DateTime?
+
+  @@unique([runId, iterationId, nodeId])
+  @@index([runId])
+  @@index([iterationId])
 }

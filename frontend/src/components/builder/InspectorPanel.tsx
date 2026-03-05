@@ -6,7 +6,8 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import * as VisuallyHidden from '@radix-ui/react-visually-hidden';
 import { NodeConfigForm } from './NodeConfigForm';
 import { RunLogs } from './RunLogs';
-import { X, Settings2, Terminal } from 'lucide-react';
+import { ReviewQueuePanel } from './ReviewQueuePanel';
+import { X, Settings2, Terminal, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/use-mobile';
 
@@ -21,17 +22,25 @@ function InspectorPanelContent({
   onOpenEdlEditor?: (projectId: string) => void;
   onClose?: () => void;
 }) {
-  const { selectedNodeId, getActiveWorkflow, inspectorTab, setInspectorTab, selectNode, runLog } = useWorkflowStore();
+  const { selectedNodeId, getActiveWorkflow, inspectorTab, setInspectorTab, selectNode, runLog, lastCompletedRunLog } = useWorkflowStore();
   const workflow = getActiveWorkflow();
   const selectedNode = workflow?.nodes.find(n => n.id === selectedNodeId);
+  const isReviewNode = selectedNode?.data?.definition?.type === 'review.approval_gate';
+  const runId = runLog?.id ?? lastCompletedRunLog?.id ?? null;
+  const effectiveTab = !isReviewNode && inspectorTab === 'queue' ? 'config' : inspectorTab;
 
   return (
-    <Tabs value={inspectorTab} onValueChange={(v) => setInspectorTab(v as 'config' | 'logs')} className="flex flex-col h-full">
+    <Tabs value={effectiveTab} onValueChange={(v) => setInspectorTab(v as 'config' | 'logs' | 'queue')} className="flex flex-col h-full">
       <div className="flex items-center border-b px-3 h-10 shrink-0">
         <TabsList className="h-7 bg-transparent p-0 gap-1">
           <TabsTrigger value="config" className="text-xs h-7 px-2.5 data-[state=active]:bg-secondary gap-1.5">
             <Settings2 className="h-3 w-3" /> Config
           </TabsTrigger>
+          {isReviewNode && (
+            <TabsTrigger value="queue" className="text-xs h-7 px-2.5 data-[state=active]:bg-secondary gap-1.5">
+              <ListChecks className="h-3 w-3" /> Queue
+            </TabsTrigger>
+          )}
           <TabsTrigger value="logs" className="text-xs h-7 px-2.5 data-[state=active]:bg-secondary gap-1.5">
             <Terminal className="h-3 w-3" /> Logs
           </TabsTrigger>
@@ -53,6 +62,12 @@ function InspectorPanelContent({
           </div>
         )}
       </TabsContent>
+
+      {isReviewNode && (
+        <TabsContent value="queue" className="flex-1 overflow-hidden p-0 m-0 flex flex-col min-h-0">
+          <ReviewQueuePanel runId={runId} workflowName={workflow?.name} onOpenEdlEditor={onOpenEdlEditor} />
+        </TabsContent>
+      )}
 
       <TabsContent value="logs" className="flex-1 overflow-y-auto p-0 m-0">
         <RunLogs />

@@ -34,7 +34,7 @@ interface EdgeData {
 export interface IterationStepLog {
   nodeId: string;
   nodeTitle: string;
-  status: "idle" | "running" | "success" | "error";
+  status: "idle" | "running" | "success" | "error" | "waiting_review";
   output?: Record<string, unknown>;
   error?: string;
 }
@@ -55,6 +55,7 @@ interface StepLog {
   /** When this step is flow.for_each: one entry per iteration with child step logs. */
   iterationSteps?: Array<{
     iteration: number;
+    itemId?: string;
     itemTitle?: string;
     steps: IterationStepLog[];
   }>;
@@ -116,6 +117,7 @@ async function persistWorkflowLastCompletedRunLog(
       output?: Record<string, unknown>;
       error?: string;
       reviewSessionId?: string;
+      iterationSteps?: StepLog["iterationSteps"];
     }>;
   },
 ): Promise<void> {
@@ -482,6 +484,40 @@ async function runExecution(
             lastIterationOutputs.set(downNode.id, { error: downResult.error });
             break;
           }
+          // Per-iteration review gate: store decision and do not run downstream for this iteration
+          if (
+            downType === "review.approval_gate" &&
+            "pauseForReview" in downResult &&
+            downResult.pauseForReview &&
+            executionId
+          ) {
+            const out = downResult.output as Record<string, unknown>;
+            iterOutputs.set(downNode.id, out);
+            lastIterationOutputs.set(downNode.id, out);
+            iterSteps.push({
+              nodeId: downNode.id,
+              nodeTitle: downNode.data.definition.title,
+              status: "waiting_review",
+              output: out,
+            });
+            await prisma.runReviewDecision.upsert({
+              where: {
+                runId_iterationId_nodeId: {
+                  runId: executionId,
+                  iterationId: itemId,
+                  nodeId: downNode.id,
+                },
+              },
+              create: {
+                runId: executionId,
+                iterationId: itemId,
+                nodeId: downNode.id,
+                decision: "pending",
+              },
+              update: { decision: "pending", updatedAt: new Date() },
+            });
+            break; // do not run downstream nodes for this iteration
+          }
           const out = downResult.output as Record<string, unknown>;
           iterOutputs.set(downNode.id, out);
           lastIterationOutputs.set(downNode.id, out);
@@ -499,6 +535,7 @@ async function runExecution(
         });
         iterationStepsLog.push({
           iteration: k,
+          itemId,
           itemTitle,
           steps: iterSteps,
         });
@@ -510,6 +547,46 @@ async function runExecution(
       stepLogs[i].completedAt = new Date().toISOString();
       stepLogs[i].durationMs = 0;
       nodeOutputs.set(forEachId, { results, items });
+
+      // If any iteration is pending review, pause run and persist state
+      const pendingCount = await prisma.runReviewDecision.count({
+        where: { runId: executionId, decision: "pending" },
+      });
+      if (pendingCount > 0) {
+        await prisma.workflowExecution.update({
+          where: { id: executionId },
+          data: { status: "WAITING_FOR_REVIEW", logs: JSON.stringify(stepLogs) },
+        });
+        const exec = await prisma.workflowExecution.findUnique({
+          where: { id: executionId },
+          select: { workflowId: true, startedAt: true },
+        });
+        if (exec) {
+          const runLogForUi = {
+            id: executionId,
+            workflowId: exec.workflowId,
+            status: "waiting_review" as const,
+            startedAt: exec.startedAt.toISOString(),
+            completedAt: undefined as string | undefined,
+            steps: stepLogs.map((l) => ({
+              nodeId: l.nodeId,
+              nodeTitle: l.nodeTitle,
+              status: l.status,
+              startedAt: l.startedAt,
+              completedAt: l.completedAt,
+              output: l.output,
+              error: l.error,
+              reviewSessionId: l.reviewSessionId,
+              iterationSteps: l.iterationSteps,
+            })),
+          };
+          await prisma.workflow.update({
+            where: { id: exec.workflowId },
+            data: { lastRunLog: JSON.stringify(runLogForUi) },
+          });
+        }
+        return;
+      }
 
       const forEachOutput = { results, items };
 
@@ -612,6 +689,7 @@ async function runExecution(
               output: l.output,
               error: l.error,
               reviewSessionId: l.reviewSessionId,
+              iterationSteps: l.iterationSteps,
             })),
           }
         : null;
@@ -1022,6 +1100,7 @@ export async function executeSingleNode(
           output: l.output,
           error: l.error,
           reviewSessionId: l.reviewSessionId,
+          iterationSteps: l.iterationSteps,
         })),
       };
       await persistWorkflowLastCompletedRunLog(workflowId, runLog);
@@ -1089,6 +1168,167 @@ function formatExecution(exec: {
     startedAt: exec.startedAt.toISOString(),
     completedAt: exec.completedAt?.toISOString() || null,
     error: exec.error,
+  };
+}
+
+/** Review queue item for one iteration (for GET /api/runs/:runId/review-queue). */
+export interface ReviewQueueItem {
+  iterationId: string;
+  itemIndex: number;
+  title: string;
+  status: "needs_review" | "approved" | "skipped" | "rendered" | "failed";
+  decision: "pending" | "approved" | "skipped" | null;
+  draftVideoUrl: string | null;
+  voiceoverUrl: string | null;
+  finalVideoUrl: string | null;
+  /** Project ID for opening the EDL editor for this iteration (when draft exists). */
+  projectId: string | null;
+  /** When status is failed: error message from the failing step. */
+  errorMessage: string | null;
+  /** When status is failed: title of the node that failed. */
+  failedNodeTitle: string | null;
+  lastUpdatedAt: string;
+}
+
+export interface ReviewQueueResponse {
+  runId: string;
+  runStatus: string;
+  workflowName?: string;
+  totalItems: number;
+  items: ReviewQueueItem[];
+  counts: { needsReview: number; approved: number; skipped: number; rendered: number; failed: number };
+}
+
+/**
+ * Get review queue for a run: list iterations with status, URLs, and decision.
+ * Used by GET /api/runs/:runId/review-queue.
+ */
+export async function getReviewQueue(
+  runId: string,
+  userId: string,
+): Promise<ReviewQueueResponse> {
+  const execution = await prisma.workflowExecution.findUnique({
+    where: { id: runId },
+    include: { workflow: { select: { userId: true, name: true } } },
+  });
+  if (!execution) throw new AppError(404, "Execution not found");
+  if (execution.workflow.userId !== userId) throw new AppError(403, "Access denied");
+
+  const logs: StepLog[] = JSON.parse(execution.logs);
+  const forEachStep = logs.find((l) => l.iterationSteps != null);
+  if (!forEachStep?.output) {
+    return {
+      runId,
+      runStatus: execution.status,
+      workflowName: execution.workflow.name,
+      totalItems: 0,
+      items: [],
+      counts: { needsReview: 0, approved: 0, skipped: 0, rendered: 0, failed: 0 },
+    };
+  }
+
+  const output = forEachStep.output as {
+    results?: Array<{ itemId: string; outputsByNodeId: Record<string, unknown> }>;
+    items?: Array<{ id?: string; title?: string }>;
+  };
+  const results = output.results ?? [];
+  const items = output.items ?? [];
+  const iterationStepsLog = forEachStep.iterationSteps ?? [];
+
+  const decisions = await prisma.runReviewDecision.findMany({
+    where: { runId },
+  });
+  const decisionByIteration = new Map(decisions.map((d) => [d.iterationId, d]));
+
+  const list: ReviewQueueItem[] = [];
+  const counts = { needsReview: 0, approved: 0, skipped: 0, rendered: 0, failed: 0 };
+
+  for (let k = 0; k < iterationStepsLog.length; k++) {
+    const entry = iterationStepsLog[k];
+    const itemId = entry.itemId ?? results[k]?.itemId ?? `item-${k + 1}`;
+    const itemTitle =
+      entry.itemTitle ??
+      (items[k] && typeof items[k] === "object" && items[k] != null && "title" in items[k]
+        ? String((items[k] as { title?: string }).title ?? itemId)
+        : itemId);
+    const outputsByNodeId = results[k]?.outputsByNodeId ?? {};
+    const decisionRow = decisionByIteration.get(itemId);
+
+    let draftVideoUrl: string | null = null;
+    let errorMessage: string | null = null;
+    let failedNodeTitle: string | null = null;
+    let voiceoverUrl: string | null = null;
+    let finalVideoUrl: string | null = null;
+    let projectId: string | null = null;
+    for (const out of Object.values(outputsByNodeId)) {
+      if (out && typeof out === "object") {
+        const o = out as Record<string, unknown>;
+        if (typeof o.draftVideoUrl === "string" && o.draftVideoUrl) draftVideoUrl = o.draftVideoUrl;
+        if (typeof o.audioUrl === "string" && o.audioUrl) voiceoverUrl = o.audioUrl;
+        if (typeof o.finalVideoUrl === "string" && o.finalVideoUrl) finalVideoUrl = o.finalVideoUrl;
+        if (typeof o.projectId === "string" && o.projectId) projectId = o.projectId;
+      }
+    }
+
+    const decisionForStatus = decisionRow?.decision ?? "pending";
+    let status: ReviewQueueItem["status"] = "needs_review";
+    if (decisionForStatus === "skipped") {
+      status = "skipped";
+      counts.skipped++;
+    } else if (decisionForStatus === "approved") {
+      status = finalVideoUrl ? "rendered" : "approved";
+      if (finalVideoUrl) counts.rendered++;
+      else counts.approved++;
+    } else {
+      const hasError = entry.steps.some((s) => s.status === "error");
+      if (hasError) {
+        status = "failed";
+        counts.failed++;
+        const errorStep = entry.steps.find((s) => s.status === "error");
+        if (errorStep) {
+          errorMessage = errorStep.error ?? "Unknown error";
+          failedNodeTitle = errorStep.nodeTitle ?? null;
+        }
+      } else {
+        counts.needsReview++;
+      }
+    }
+
+    // WorkflowExecution has no updatedAt; use startedAt/completedAt
+    const lastUpdatedAt =
+      decisionRow?.decidedAt ??
+      decisionRow?.updatedAt ??
+      execution.completedAt ??
+      execution.startedAt;
+
+    const rawDecision = decisionRow?.decision;
+    const decision: ReviewQueueItem["decision"] =
+      rawDecision === "approved" || rawDecision === "skipped" || rawDecision === "pending"
+        ? rawDecision
+        : null;
+    list.push({
+      iterationId: itemId,
+      itemIndex: k,
+      title: itemTitle,
+      status,
+      decision,
+      draftVideoUrl,
+      voiceoverUrl,
+      finalVideoUrl,
+      projectId,
+      errorMessage,
+      failedNodeTitle,
+      lastUpdatedAt: lastUpdatedAt.toISOString(),
+    });
+  }
+
+  return {
+    runId,
+    runStatus: execution.status,
+    workflowName: execution.workflow.name,
+    totalItems: list.length,
+    items: list,
+    counts,
   };
 }
 
@@ -1181,4 +1421,311 @@ export async function resolveReviewAndResume(
     previousLogs,
   });
   return getExecution(executionId, userId);
+}
+
+/**
+ * Decide (approve or skip) a per-iteration review and optionally resume that iteration's downstream nodes.
+ * Used when Review node runs inside a For Each loop.
+ */
+export async function decideIterationReviewAndResume(
+  runId: string,
+  iterationId: string,
+  userId: string,
+  params: { decision: "approved" | "skipped"; notes?: string },
+) {
+  const execution = await prisma.workflowExecution.findUnique({
+    where: { id: runId },
+    include: { workflow: { select: { userId: true, nodes: true, edges: true } } },
+  });
+  if (!execution) throw new AppError(404, "Execution not found");
+  if (execution.workflow.userId !== userId) throw new AppError(403, "Access denied");
+
+  const decisionRow = await prisma.runReviewDecision.findFirst({
+    where: { runId, iterationId, decision: "pending" },
+  });
+  if (!decisionRow) throw new AppError(404, "No pending review decision for this iteration.");
+
+  const now = new Date();
+  if (params.decision === "skipped") {
+    await prisma.runReviewDecision.update({
+      where: { id: decisionRow.id },
+      data: { decision: "skipped", notes: params.notes ?? null, decidedAt: now, updatedAt: now },
+    });
+    return getExecution(runId, userId);
+  }
+
+  // approved: update decision and run downstream nodes for this iteration only
+  await prisma.runReviewDecision.update({
+    where: { id: decisionRow.id },
+    data: { decision: "approved", notes: params.notes ?? null, decidedAt: now, updatedAt: now },
+  });
+
+  const logs: StepLog[] = JSON.parse(execution.logs);
+  const forEachStepIndex = logs.findIndex((l) => l.iterationSteps != null);
+  if (forEachStepIndex < 0) throw new AppError(400, "No For Each step in execution.");
+  const forEachStep = logs[forEachStepIndex];
+  const output = forEachStep.output as { results?: Array<{ itemId: string; outputsByNodeId: Record<string, unknown> }> } | undefined;
+  const results = output?.results ?? [];
+  const iterationIndex = results.findIndex((r) => r.itemId === iterationId);
+  if (iterationIndex < 0) throw new AppError(400, "Iteration not found in results.");
+  const iterationStepsLog = forEachStep.iterationSteps ?? [];
+  const entry = iterationStepsLog[iterationIndex];
+  if (!entry) throw new AppError(400, "Iteration step log not found.");
+
+  const outputsByNodeId = results[iterationIndex].outputsByNodeId ?? {};
+  let iterOutputs = new Map<string, Record<string, unknown>>(
+    Object.entries(outputsByNodeId).map(([k, v]) => [k, typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {}]),
+  );
+  const reviewOutput = iterOutputs.get(decisionRow.nodeId) as Record<string, unknown> | undefined;
+  if (reviewOutput) {
+    const approvedEdlUrl = String(reviewOutput.edlUrl ?? reviewOutput.approvedEdlUrl ?? "");
+    if (approvedEdlUrl) iterOutputs.set(decisionRow.nodeId, { ...reviewOutput, approvedEdlUrl });
+  }
+
+  const nodes: NodeData[] = JSON.parse(execution.workflow.nodes);
+  const edges: EdgeData[] = JSON.parse(execution.workflow.edges);
+  const activeNodes = nodes.filter((n) => n.data?.status !== "disabled");
+  const sorted = topologicalSort(activeNodes, edges);
+  const reviewNodeIndex = sorted.findIndex((n) => n.id === decisionRow.nodeId);
+  if (reviewNodeIndex < 0) throw new AppError(400, "Review node not found in workflow.");
+  const forEachId = sorted[forEachStepIndex].id;
+  const getApiKey = (service: string) => getDecryptedKey(userId, service);
+  const getVoiceProfile = (profileId: string) =>
+    getVoiceProfileForExecution(profileId, userId);
+  const itemObj = (output as { items?: unknown[] })?.items?.[iterationIndex] ?? {};
+  iterOutputs.set(forEachId, { _item: itemObj });
+
+  const approvedEdlUrlVal = String(reviewOutput?.edlUrl ?? reviewOutput?.approvedEdlUrl ?? "");
+  const newSteps: IterationStepLog[] = entry.steps.map((s) =>
+    s.nodeId === decisionRow.nodeId
+      ? { ...s, status: "success" as const, output: { ...(s.output ?? {}), approvedEdlUrl: approvedEdlUrlVal } }
+      : s
+  );
+
+  for (let j = reviewNodeIndex + 1; j < sorted.length; j++) {
+    const downNode = sorted[j];
+    const downType = downNode.data.definition.type || downNode.type;
+    if (downType === "preview.loop_outputs") break;
+    const downIncoming = edges.filter((e) => normId(e.target) === normId(downNode.id));
+    const downInput: Record<string, unknown> = {};
+    for (const edge of downIncoming) {
+      const src = edge.source;
+      if (normId(src) === normId(forEachId)) downInput._item = itemObj;
+      else {
+        const up = getOutputByNodeId(iterOutputs, src);
+        if (up) downInput[src] = up;
+      }
+    }
+    const downCtx: ExecutorContext = {
+      nodeId: downNode.id,
+      nodeType: downType,
+      category: downNode.data.definition.category,
+      config: downNode.data.config || {},
+      inputData: downInput,
+      getApiKey,
+      userId,
+      getVoiceProfile,
+      executionId: runId,
+      stepIndex: j,
+    };
+    const downResult = await executeNode(downCtx);
+    if ("error" in downResult) {
+      newSteps.push({
+        nodeId: downNode.id,
+        nodeTitle: downNode.data.definition.title,
+        status: "error",
+        error: downResult.error,
+      });
+      iterOutputs.set(downNode.id, { error: downResult.error });
+      break;
+    }
+    if (
+      downType === "review.approval_gate" &&
+      "pauseForReview" in downResult &&
+      downResult.pauseForReview
+    ) {
+      break;
+    }
+    const out = downResult.output as Record<string, unknown>;
+    iterOutputs.set(downNode.id, out);
+    newSteps.push({
+      nodeId: downNode.id,
+      nodeTitle: downNode.data.definition.title,
+      status: "success",
+      output: out,
+    });
+  }
+
+  results[iterationIndex].outputsByNodeId = Object.fromEntries(iterOutputs);
+  iterationStepsLog[iterationIndex] = { ...entry, steps: newSteps };
+  (forEachStep as StepLog).iterationSteps = iterationStepsLog;
+  forEachStep.output = { ...(forEachStep.output as object), results };
+
+  await prisma.workflowExecution.update({
+    where: { id: runId },
+    data: { logs: JSON.stringify(logs) },
+  });
+
+  return getExecution(runId, userId);
+}
+
+/**
+ * Re-run one iteration from the first node after For Each (e.g. Voice TTS, Auto Edit) to regenerate a failed draft.
+ * Resets that iteration's steps and re-executes; if Review node is hit, sets decision to pending.
+ */
+export async function regenerateDraftForIteration(
+  runId: string,
+  iterationId: string,
+  userId: string,
+): Promise<{ id: string; status: string; logs: unknown[] }> {
+  const execution = await prisma.workflowExecution.findUnique({
+    where: { id: runId },
+    include: { workflow: { select: { userId: true, nodes: true, edges: true } } },
+  });
+  if (!execution) throw new AppError(404, "Execution not found");
+  if (execution.workflow.userId !== userId) throw new AppError(403, "Access denied");
+
+  const logs: StepLog[] = JSON.parse(execution.logs);
+  const forEachStepIndex = logs.findIndex((l) => l.iterationSteps != null);
+  if (forEachStepIndex < 0) throw new AppError(400, "No For Each step in execution.");
+  const forEachStep = logs[forEachStepIndex];
+  const output = forEachStep.output as {
+    results?: Array<{ itemId: string; outputsByNodeId: Record<string, unknown> }>;
+    items?: unknown[];
+  };
+  const results = output?.results ?? [];
+  const items = output?.items ?? [];
+  const iterationIndex = results.findIndex((r) => r.itemId === iterationId);
+  if (iterationIndex < 0) throw new AppError(404, "Iteration not found.");
+  const iterationStepsLog = forEachStep.iterationSteps ?? [];
+  const entry = iterationStepsLog[iterationIndex];
+  if (!entry) throw new AppError(400, "Iteration step log not found.");
+
+  const itemObj =
+    items[iterationIndex] && typeof items[iterationIndex] === "object"
+      ? (items[iterationIndex] as Record<string, unknown>)
+      : {};
+  const nodes: NodeData[] = JSON.parse(execution.workflow.nodes);
+  const edges: EdgeData[] = JSON.parse(execution.workflow.edges);
+  const activeNodes = nodes.filter((n) => n.data?.status !== "disabled");
+  const sorted = topologicalSort(activeNodes, edges);
+  const forEachId = sorted[forEachStepIndex].id;
+  const downstreamStart = forEachStepIndex + 1;
+
+  const getApiKey = (service: string) => getDecryptedKey(userId, service);
+  const getVoiceProfile = (profileId: string) =>
+    getVoiceProfileForExecution(profileId, userId);
+
+  const iterSteps: IterationStepLog[] = [];
+  const iterOutputs = new Map<string, Record<string, unknown>>();
+  iterOutputs.set(forEachId, { _item: itemObj });
+
+  for (let j = downstreamStart; j < sorted.length; j++) {
+    const downNode = sorted[j];
+    const downType = downNode.data.definition.type || downNode.type;
+    if (downType === "preview.loop_outputs") {
+      iterOutputs.set(downNode.id, { items: [] });
+      iterSteps.push({
+        nodeId: downNode.id,
+        nodeTitle: downNode.data.definition.title,
+        status: "success",
+        output: { items: [] },
+      });
+      continue;
+    }
+    const downIncoming = edges.filter((e) => normId(e.target) === normId(downNode.id));
+    const downInput: Record<string, unknown> = {};
+    for (const edge of downIncoming) {
+      const src = edge.source;
+      if (normId(src) === normId(forEachId)) {
+        downInput._item = itemObj;
+      } else {
+        const up = getOutputByNodeId(iterOutputs, src);
+        if (up) downInput[src] = up;
+      }
+    }
+    const downCtx: ExecutorContext = {
+      nodeId: downNode.id,
+      nodeType: downType,
+      category: downNode.data.definition.category,
+      config: downNode.data.config || {},
+      inputData: downInput,
+      getApiKey,
+      userId,
+      getVoiceProfile,
+      executionId: runId,
+      stepIndex: j,
+    };
+    const downResult = await executeNode(downCtx);
+    if ("error" in downResult) {
+      iterSteps.push({
+        nodeId: downNode.id,
+        nodeTitle: downNode.data.definition.title,
+        status: "error",
+        error: downResult.error,
+      });
+      iterOutputs.set(downNode.id, { error: downResult.error });
+      break;
+    }
+    if (
+      downType === "review.approval_gate" &&
+      "pauseForReview" in downResult &&
+      downResult.pauseForReview &&
+      runId
+    ) {
+      const out = downResult.output as Record<string, unknown>;
+      iterOutputs.set(downNode.id, out);
+      iterSteps.push({
+        nodeId: downNode.id,
+        nodeTitle: downNode.data.definition.title,
+        status: "waiting_review",
+        output: out,
+      });
+      await prisma.runReviewDecision.upsert({
+        where: {
+          runId_iterationId_nodeId: {
+            runId,
+            iterationId,
+            nodeId: downNode.id,
+          },
+        },
+        create: {
+          runId,
+          iterationId,
+          nodeId: downNode.id,
+          decision: "pending",
+        },
+        update: { decision: "pending", updatedAt: new Date() },
+      });
+      break;
+    }
+    const out = downResult.output as Record<string, unknown>;
+    iterOutputs.set(downNode.id, out);
+    iterSteps.push({
+      nodeId: downNode.id,
+      nodeTitle: downNode.data.definition.title,
+      status: "success",
+      output: out,
+    });
+  }
+
+  results[iterationIndex].outputsByNodeId = Object.fromEntries(iterOutputs);
+  iterationStepsLog[iterationIndex] = {
+    ...entry,
+    steps: iterSteps,
+  };
+  (forEachStep as StepLog).iterationSteps = iterationStepsLog;
+  forEachStep.output = { ...(forEachStep.output as object), results };
+
+  const pendingCount = await prisma.runReviewDecision.count({
+    where: { runId, decision: "pending" },
+  });
+  const newStatus = pendingCount > 0 ? "WAITING_FOR_REVIEW" : execution.status;
+
+  await prisma.workflowExecution.update({
+    where: { id: runId },
+    data: { logs: JSON.stringify(logs), ...(newStatus !== execution.status ? { status: newStatus } : {}) },
+  });
+
+  return getExecution(runId, userId);
 }

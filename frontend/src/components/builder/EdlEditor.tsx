@@ -538,6 +538,27 @@ export function EdlEditor({
     [edl, updateEdl]
   );
 
+  /** Save EDL to server only (no re-render). Used for Ctrl+S, Save button, and save-on-close. */
+  const handleSaveDraft = useCallback(async () => {
+    if (!edl || saving) return;
+    setSaving(true);
+    setError(null);
+    setSaveStatus('saving');
+    try {
+      await projectsApi.updateEdl(projectId, edl);
+      setDirty(false);
+      setSaveStatus('saved');
+      toast.success('Saved');
+    } catch (e: unknown) {
+      const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Save failed';
+      setError(msg);
+      setSaveStatus('idle');
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  }, [edl, saving, projectId, setSaveStatus]);
+
   const handleSaveAndRerender = useCallback(
     async (options?: ExportOptions) => {
       if (!edl || saving) return;
@@ -647,6 +668,31 @@ export function EdlEditor({
     [edl, saving, projectId, onSaved, setSaveStatus, updateEdl]
   );
 
+  /** Close editor; if dirty, save EDL first then close. On save failure, keep editor open. */
+  const handleClose = useCallback(async () => {
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    if (!edl || saving) return;
+    setSaving(true);
+    setError(null);
+    setSaveStatus('saving');
+    try {
+      await projectsApi.updateEdl(projectId, edl);
+      setDirty(false);
+      setSaveStatus('saved');
+      toast.success('Changes saved');
+      onClose();
+    } catch (e: unknown) {
+      const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Save failed';
+      setError(msg);
+      setSaveStatus('idle');
+      toast.error(msg);
+      setSaving(false);
+    }
+  }, [dirty, edl, saving, projectId, onClose, setSaveStatus]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const v = videoRef.current;
@@ -657,7 +703,7 @@ export function EdlEditor({
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
-        if (edl && !saving) handleSaveAndRerender();
+        if (edl && !saving) void handleSaveDraft();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const target = e.target as Node;
@@ -683,7 +729,7 @@ export function EdlEditor({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [edl, saving, handleSaveAndRerender, deleteClip, deleteOverlay]);
+  }, [edl, saving, handleSaveDraft, deleteClip, deleteOverlay]);
 
   useEffect(() => {
     return () => {
@@ -752,8 +798,11 @@ export function EdlEditor({
       resolvedClipUrls={resolvedClipUrls}
       resolvedAudioUrl={resolvedAudioUrl}
       onEdlChange={updateEdl}
-      onClose={onClose}
+      onClose={handleClose}
       onExport={handleSaveAndRerender}
+      onSaveDraft={handleSaveDraft}
+      dirty={dirty}
+      savingDraft={saving}
       exportDisabled={false}
       exporting={saving}
       exportProgress={exportProgress}

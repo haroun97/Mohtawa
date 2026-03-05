@@ -12,6 +12,7 @@ import mediaRoutes from "./routes/media";
 import projectRoutes from "./routes/projects";
 import renderRoutes from "./routes/renders";
 import ideaDocsRoutes from "./routes/ideaDocs";
+import runsRoutes from "./routes/runs";
 import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
@@ -78,6 +79,7 @@ app.use("/api/media", mediaRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/renders", renderRoutes);
 app.use("/api/idea-docs", ideaDocsRoutes);
+app.use("/api/runs", runsRoutes);
 
 app.use(errorHandler);
 

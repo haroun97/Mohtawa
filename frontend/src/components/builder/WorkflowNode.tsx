@@ -6,6 +6,7 @@ import { MoreHorizontal, Copy, Trash2, EyeOff, Loader2, Download } from 'lucide-
 import * as Icons from 'lucide-react';
 import { hasPlayableAudio, parseS3KeyFromUrl } from '@/lib/audioPlayback';
 import { hasFinalVideoOutput, getFinalVideoDownloadUrl, triggerVideoDownload } from '@/lib/videoDownload';
+import { getDisplayFromIterationSteps } from '@/lib/runLogIterationSteps';
 import { api } from '@/lib/api';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
@@ -76,29 +77,41 @@ function getIcon(name: string) {
 export const WorkflowNodeComponent = memo(({ id, data }: { id: string; data: any }) => {
   const { definition, config, status = 'idle', isSelected } = data;
   const cat = definition.category as NodeCategory;
-  const { duplicateNode, removeNode, toggleNodeDisabled, runLog, lastCompletedRunLog, testingNodeId } = useWorkflowStore();
+  const { duplicateNode, removeNode, toggleNodeDisabled, runLog, lastCompletedRunLog, testingNodeId, getActiveWorkflow } = useWorkflowStore();
   const stepFromRun = runLog?.steps?.find((s) => s.nodeId === id);
   const stepFromCompleted = lastCompletedRunLog?.steps?.find((s) => s.nodeId === id);
   const isTesting = testingNodeId === id;
-  const displayStatus = isTesting ? 'running' : status;
   const isRenderFinalNode = definition.type === 'video.render_final';
+  // When run has For Each iterations, derive display from iterationSteps so node card shows
+  // last successful draft (e.g. after reload) instead of only last iteration's top-level output.
+  const iterationDisplay = getDisplayFromIterationSteps(runLog ?? null, id)
+    ?? getDisplayFromIterationSteps(lastCompletedRunLog ?? null, id);
+  const effectiveStepFromIteration =
+    iterationDisplay != null
+      ? { output: iterationDisplay.output, status: iterationDisplay.status }
+      : null;
+  const displayStatus = isTesting ? 'running' : (effectiveStepFromIteration?.status ?? status);
   const lastStep =
     isRenderFinalNode && stepFromRun && stepFromRun.output && hasFinalVideoOutput(stepFromRun.output as Record<string, unknown>)
       ? stepFromRun
       : isRenderFinalNode && stepFromCompleted?.output && hasFinalVideoOutput(stepFromCompleted.output as Record<string, unknown>)
         ? stepFromCompleted
-        : (stepFromRun ?? stepFromCompleted);
+        : effectiveStepFromIteration != null
+          ? effectiveStepFromIteration
+          : (stepFromRun ?? stepFromCompleted);
   const hasAudio = definition.type === 'preview-output' && lastStep?.output && hasPlayableAudio(lastStep.output as Record<string, unknown>);
   const isReviewNode = definition.type === 'review.approval_gate';
   const hasFinalVideo = isRenderFinalNode && lastStep?.output && hasFinalVideoOutput(lastStep.output as Record<string, unknown>);
-  const draftVideoUrl = isReviewNode && lastStep?.output && typeof (lastStep.output as Record<string, unknown>).draftVideoUrl === 'string'
+  const draftVideoUrlFromStep = isReviewNode && lastStep?.output && typeof (lastStep.output as Record<string, unknown>).draftVideoUrl === 'string'
     ? (lastStep.output as Record<string, unknown>).draftVideoUrl as string
     : undefined;
-  if (isReviewNode) {
-    const stepsWithIters = runLog?.steps?.filter((s) => (s.iterationSteps?.length ?? 0) > 0) ?? [];
-    console.log('[Review node DEBUG] canvas nodeId:', id, 'stepFromRun:', !!stepFromRun, 'stepFromCompleted:', !!stepFromCompleted, 'lastStep source:', lastStep === stepFromRun ? 'runLog' : 'lastCompletedRunLog', 'draftVideoUrl:', !!draftVideoUrl, 'runLog.steps with iterationSteps:', stepsWithIters.length, stepsWithIters.map((s) => ({ nodeId: s.nodeId, iterCount: s.iterationSteps?.length })));
-  }
-
+  const draftVideoUrl = draftVideoUrlFromStep ?? (isReviewNode && (() => {
+    const steps = runLog?.steps ?? lastCompletedRunLog?.steps ?? [];
+    const edges = getActiveWorkflow()?.edges ?? [];
+    const upstreamIds = edges.filter((e) => e.target === id).map((e) => e.source);
+    const upStep = steps.find((s) => upstreamIds.includes(s.nodeId) && s.output && typeof (s.output as Record<string, unknown>).draftVideoUrl === 'string');
+    return upStep ? (upStep.output as Record<string, unknown>).draftVideoUrl as string : undefined;
+  })());
   const [videoPlayUrl, setVideoPlayUrl] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const [downloadingVideo, setDownloadingVideo] = useState(false);
