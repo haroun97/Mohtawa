@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
-import { getProject, getEdl, updateEdl, renderDraft } from "../services/projects";
+import { listProjects, getProject, getEdl, updateEdl, renderDraft } from "../services/projects";
 import { getExportPreview } from "../lib/exportPreviewStore";
 import { AppError } from "../middleware/errorHandler";
 
@@ -10,6 +10,16 @@ router.use(authenticate);
 function paramId(p: string | string[] | undefined): string {
   return (Array.isArray(p) ? p[0] : p) ?? "";
 }
+
+/** GET /api/projects — list current user's video projects (for e.g. "Edit draft" test entry). */
+router.get("/", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const projects = await listProjects(req.user!.userId);
+    res.json(projects);
+  } catch (e) {
+    next(e);
+  }
+});
 
 /** GET /api/projects/:projectId/export-preview — live progress + preview image during sync export */
 router.get(

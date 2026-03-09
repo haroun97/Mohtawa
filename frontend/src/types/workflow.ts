@@ -1,4 +1,16 @@
-export type NodeCategory = 'trigger' | 'ai' | 'voice' | 'video' | 'social' | 'logic' | 'utility' | 'review' | 'ideas' | 'text' | 'script';
+import type {
+  NodeCategory as SharedNodeCategory,
+  RunStatus as SharedRunStatus,
+  RunStep as SharedRunStep,
+  RunLog as SharedRunLog,
+  IterationStepLog as SharedIterationStepLog,
+} from "@mohtawa/shared";
+
+export type NodeCategory = SharedNodeCategory;
+export type RunStatus = SharedRunStatus;
+export type RunStep = SharedRunStep;
+export type RunLog = SharedRunLog;
+export type IterationStepLog = SharedIterationStepLog;
 
 export interface NodeDefinition {
   type: string;
@@ -51,40 +63,3 @@ export interface WorkflowEdge {
   targetHandle?: string;
 }
 
-export type RunStatus = 'idle' | 'running' | 'success' | 'error' | 'waiting_review';
-
-/** Step log for a single node inside a For Each iteration */
-export interface IterationStepLog {
-  nodeId: string;
-  nodeTitle: string;
-  status: string;
-  output?: Record<string, unknown>;
-  error?: string;
-}
-
-export interface RunStep {
-  nodeId: string;
-  nodeTitle: string;
-  status: RunStatus;
-  startedAt?: string;
-  completedAt?: string;
-  input?: Record<string, any>;
-  output?: Record<string, any>;
-  error?: string;
-  reviewSessionId?: string;
-  /** When this step is For Each: one entry per iteration with child step logs */
-  iterationSteps?: Array<{
-    iteration: number;
-    itemTitle?: string;
-    steps: IterationStepLog[];
-  }>;
-}
-
-export interface RunLog {
-  id: string;
-  workflowId: string;
-  status: RunStatus;
-  startedAt: string;
-  completedAt?: string;
-  steps: RunStep[];
-}

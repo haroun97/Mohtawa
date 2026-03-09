@@ -12,7 +12,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mohtawa.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,9 +31,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-image",
       "expo-secure-store",
-      "expo-sharing"
-    ]
+      "expo-video"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8e57f353-a691-4f45-8aeb-384fa81aa8d3"
+      }
+    }
   }
 }

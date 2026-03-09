@@ -12,6 +12,14 @@ import {
   isDraftRenderQueueAvailable,
 } from "../lib/draftRenderQueue.js";
 
+export async function listProjects(userId: string) {
+  return prisma.videoProject.findMany({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, status: true, createdAt: true, updatedAt: true },
+  });
+}
+
 export async function getProject(projectId: string, userId: string) {
   const project = await prisma.videoProject.findFirst({
     where: { id: projectId, userId },

@@ -50,12 +50,21 @@ export const audioSchema = z.object({
   audioTrackMuted: z.boolean().optional(),
   /** When true, music track is muted in timeline. */
   musicTrackMuted: z.boolean().optional(),
+  /** Timeline range (seconds) where music is audible. When absent, music spans full timeline. */
+  musicStartSec: z.number().min(0).optional(),
+  musicEndSec: z.number().min(0).optional(),
+  /** Timeline range (seconds) where voice is audible. When absent, voice spans full timeline. */
+  voiceStartSec: z.number().min(0).optional(),
+  voiceEndSec: z.number().min(0).optional(),
 });
 
 export const colorSchema = z.object({
   saturation: z.number().min(0).optional(),
   contrast: z.number().min(0).optional(),
   vibrance: z.number().min(0).optional(),
+  /** Timeline range (seconds) where color/filter applies. When absent, applies to full timeline. */
+  startSec: z.number().min(0).optional(),
+  endSec: z.number().min(0).optional(),
 }).optional();
 
 export const outputSchema = z.object({

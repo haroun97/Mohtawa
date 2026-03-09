@@ -6,29 +6,26 @@ import {
   ListChecks,
   Settings,
 } from 'lucide-react-native';
+import type { RootTabParamList } from './types';
 import { ProjectsScreen } from '../screens/ProjectsScreen';
 import { RunsScreen } from '../screens/RunsScreen';
 import { ReviewQueueScreen } from '../screens/ReviewQueueScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 
-export type RootTabParamList = {
-  Projects: undefined;
-  Runs: undefined;
-  ReviewQueue: undefined;
-  Settings: undefined;
-};
-
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
 const tabIconSize = 24;
 
-export function RootNavigator() {
+export function MainTabsNavigator() {
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: true,
-        tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#64748b',
+        headerStyle: { backgroundColor: '#1e293b' },
+        headerTintColor: '#f1f5f9',
+        tabBarStyle: { backgroundColor: '#1e293b' },
+        tabBarActiveTintColor: '#3b82f6',
+        tabBarInactiveTintColor: '#94a3b8',
       }}
     >
       <Tab.Screen

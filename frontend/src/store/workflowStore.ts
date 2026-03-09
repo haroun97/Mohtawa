@@ -3,6 +3,7 @@ import { Workflow, WorkflowNode, WorkflowEdge, RunLog, RunStep, RunStatus } from
 import { nodeDefinitions } from './nodeDefinitions';
 import { api } from '@/lib/api';
 import { getIdeasDocForWorkflow } from '@/lib/ideasEditorStorage';
+import { WorkflowListItemSchema, RunLogSchema } from '@mohtawa/shared';
 
 interface HistoryEntry {
   nodes: WorkflowNode[];
@@ -254,7 +255,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   fetchWorkflows: async () => {
     set({ isLoading: true });
     try {
-      const data = await api.get<ApiWorkflow[]>('/workflows');
+      const raw = await api.get<unknown[]>('/workflows');
+      const data = (raw || []).map((item, i) => {
+        const parsed = WorkflowListItemSchema.safeParse(item);
+        if (parsed.success) return parsed.data as ApiWorkflow;
+        console.warn('[workflowStore] Workflow list item validation failed', i, parsed.error.flatten());
+        return item as ApiWorkflow;
+      });
       set({ workflows: data.map(apiToWorkflow), isLoading: false });
     } catch (err) {
       console.error('Failed to fetch workflows:', err);
@@ -265,7 +272,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   fetchWorkflow: async (id: string) => {
     set({ isLoading: true });
     try {
-      const data = await api.get<ApiWorkflow>(`/workflows/${id}`);
+      const raw = await api.get<unknown>(`/workflows/${id}`);
+      const parsed = WorkflowListItemSchema.safeParse(raw);
+      const data = (parsed.success ? parsed.data : raw) as ApiWorkflow;
+      if (!parsed.success) {
+        console.warn('[workflowStore] Workflow validation failed', parsed.error.flatten());
+      }
       const wf = apiToWorkflow(data);
       set(state => {
         const exists = state.workflows.some(w => w.id === id);
@@ -302,11 +314,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         // and the video + Edit draft remain visible after reload. Use lastCompletedRunLog for
         // Render Final / Download fallback when needed.
         if (execToRestore) {
-          const runLog = executionToRunLog(execToRestore);
-          const lastCompletedRunLog =
+          const runLog = validateRunLog(executionToRunLog(execToRestore));
+          const lastCompletedRunLog = validateRunLog(
             isInProgress
               ? (finished ? executionToRunLog(finished) : workflowLastCompleted)
-              : null;
+              : null
+          );
           set(state => ({
             ...state,
             runLog,
@@ -341,16 +354,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             ),
           }));
         } else if (workflowLastCompleted) {
+          const runLog = validateRunLog(workflowLastCompleted);
           set(state => ({
             ...state,
-            runLog: workflowLastCompleted,
-            lastCompletedRunLog: workflowLastCompleted,
+            runLog,
+            lastCompletedRunLog: runLog,
             workflows: state.workflows.map(w =>
               w.id === id
                 ? {
                     ...w,
                     nodes: w.nodes.map(n => {
-                      const stepLog = (workflowLastCompleted as RunLog).steps.find((s) => s.nodeId === n.id);
+                      const stepLog = runLog?.steps?.find((s) => s.nodeId === n.id);
                       if (stepLog) {
                         return { ...n, data: { ...n.data, status: stepLog.status } };
                       }
@@ -362,8 +376,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           }));
         } else if (data?.lastRunLog) {
           // No executions (or empty list): restore from workflow's lastRunLog so Review node video etc. persist after reload
-          const runLog = data.lastRunLog;
-          const lastCompletedRunLog = data.lastCompletedRunLog ?? data.lastRunLog;
+          const runLog = validateRunLog(data.lastRunLog as RunLog);
+          const lastCompletedRunLog = validateRunLog((data.lastCompletedRunLog ?? data.lastRunLog) as RunLog | null);
           set(state => ({
             ...state,
             runLog,
@@ -416,13 +430,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       // state but the workflow has run log data, restore from it (covers any missed branch or race).
       const state = get();
       if (state.activeWorkflowId === id && !state.runLog && (data?.lastCompletedRunLog ?? data?.lastRunLog)) {
-        const runLog = data.lastRunLog ?? data.lastCompletedRunLog ?? null;
-        const lastCompletedRunLog = data.lastCompletedRunLog ?? data.lastRunLog ?? null;
+        const runLog = validateRunLog((data.lastRunLog ?? data.lastCompletedRunLog ?? null) as RunLog | null);
+        const lastCompletedRunLog = validateRunLog((data.lastCompletedRunLog ?? data.lastRunLog ?? null) as RunLog | null);
         if (runLog) {
           set(s => ({
             ...s,
             runLog,
-            lastCompletedRunLog,
+            lastCompletedRunLog: lastCompletedRunLog ?? runLog,
             workflows: s.workflows.map(w =>
               w.id === id
                 ? {

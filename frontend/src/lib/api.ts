@@ -1,3 +1,12 @@
+import { z } from "zod";
+import {
+  type ReviewQueueItem,
+  type ReviewQueueResponse,
+  type ReviewDecideBody,
+  ReviewQueueResponseSchema,
+  ReviewDecideBodySchema,
+} from "@mohtawa/shared";
+
 /** API base URL. In dev, uses current host (so LAN IP works without editing .env when IP changes). */
 function getApiBase(): string {
   const fromEnv = import.meta.env.VITE_API_BASE;
@@ -61,6 +70,19 @@ async function request<T>(endpoint: string, options: ApiOptions = {}): Promise<T
   }
 
   return res.json();
+}
+
+/** Request JSON and validate with a shared zod schema. On parse failure, logs and returns raw data. */
+async function requestAndParse<T>(
+  endpoint: string,
+  schema: z.ZodType<T>,
+  options: ApiOptions = {}
+): Promise<T> {
+  const raw = await request<unknown>(endpoint, options);
+  const result = schema.safeParse(raw);
+  if (result.success) return result.data;
+  console.warn("[api] Response validation failed:", result.error.flatten());
+  return raw as T;
 }
 
 export const api = {
@@ -267,52 +289,24 @@ export const rendersApi = {
     api.get<RenderStatus>(`/renders/${jobId}/status`),
 };
 
-/** Phase 7b.7: Review queue for batch runs */
-export interface ReviewQueueItem {
-  iterationId: string;
-  itemIndex: number;
-  title: string;
-  status: "needs_review" | "approved" | "skipped" | "rendered" | "failed";
-  decision: "pending" | "approved" | "skipped" | null;
-  draftVideoUrl: string | null;
-  voiceoverUrl: string | null;
-  finalVideoUrl: string | null;
-  /** Project ID for opening the EDL editor for this iteration (when draft exists). */
-  projectId: string | null;
-  /** When status is failed: error message from the failing step. */
-  errorMessage: string | null;
-  /** When status is failed: title of the node that failed. */
-  failedNodeTitle: string | null;
-  lastUpdatedAt: string;
-}
-
-export interface ReviewQueueResponse {
-  runId: string;
-  runStatus: string;
-  workflowName?: string;
-  totalItems: number;
-  items: ReviewQueueItem[];
-  counts: {
-    needsReview: number;
-    approved: number;
-    skipped: number;
-    rendered: number;
-    failed: number;
-  };
-}
+/** Phase 7b.7: Review queue for batch runs (types + runtime validation from @mohtawa/shared) */
+export type { ReviewQueueItem, ReviewQueueResponse, ReviewDecideBody };
 
 export const runsApi = {
   getReviewQueue: (runId: string) =>
-    api.get<ReviewQueueResponse>(`/runs/${runId}/review-queue`),
+    requestAndParse(`/runs/${runId}/review-queue`, ReviewQueueResponseSchema),
   decideReview: (
     runId: string,
     iterationId: string,
-    body: { decision: "approved" | "skipped"; notes?: string }
-  ) =>
-    api.post<unknown>(
+    body: ReviewDecideBody
+  ) => {
+    const parsed = ReviewDecideBodySchema.safeParse(body);
+    const payload = parsed.success ? parsed.data : body;
+    return api.post<unknown>(
       `/runs/${runId}/iterations/${iterationId}/review/decide`,
-      body
-    ),
+      payload
+    );
+  },
   regenerateDraft: (runId: string, iterationId: string) =>
     api.post<unknown>(`/runs/${runId}/iterations/${iterationId}/regenerate-draft`),
 };

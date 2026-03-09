@@ -29,7 +29,7 @@ React Native app built with **Expo** and **Expo Dev Client** (TypeScript). Uses 
 3. From `mobile/` run:
    - `npm run prebuild` — generates the `ios` and `android` folders.
    - `npm run dev-client` — builds and runs the iOS app with the Dev Client. Connect your iPhone via USB and select it as the run destination if desired.
-4. Once the Dev Client app is installed on the device, start the dev server with `npm run start` and open the project from the Dev Client (e.g. by scanning the QR code or entering the URL). The app will load with all native modules (Reanimated, Bottom Sheet, expo-av, etc.).
+4. Once the Dev Client app is installed on the device, start the dev server with `npm run start` and open the project from the Dev Client (e.g. by scanning the QR code or entering the URL). The app will load with all native modules (Reanimated, Bottom Sheet, expo-video, etc.).
 
 ### iOS builds without a Mac
 
@@ -38,7 +38,8 @@ React Native app built with **Expo** and **Expo Dev Client** (TypeScript). Uses 
 
 ## Environment
 
-- Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL` to your backend base URL (e.g. `http://192.168.1.10:3000` for a physical device on the same LAN). No trailing slash.
+- **Development on a physical device:** The app automatically uses the same host as the Metro bundler for the API (e.g. if you open the app from `192.168.1.5:8081`, it will call `http://192.168.1.5:3001/api`). Ensure your backend runs on port 3001 and the phone is on the same Wi‑Fi. You do **not** need to set `EXPO_PUBLIC_API_URL` for this.
+- **Override or production:** Set `EXPO_PUBLIC_API_URL` to your backend base URL including `/api` (e.g. `https://api.example.com/api`). See `.env.example`.
 - Auth token is stored via `expo-secure-store` (see `src/lib/authStorage.ts`).
 
 ## MVP screens
