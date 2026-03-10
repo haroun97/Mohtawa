@@ -1,6 +1,15 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authenticate } from "../middleware/auth";
-import { listProjects, getProject, getEdl, updateEdl, renderDraft } from "../services/projects";
+import {
+  listProjects,
+  getProject,
+  getEdl,
+  updateEdl,
+  renderDraft,
+  renderColorPreview,
+  getTimelinePreview,
+  type PreviewColorInput,
+} from "../services/projects";
 import { getExportPreview } from "../lib/exportPreviewStore";
 import { AppError } from "../middleware/errorHandler";
 
@@ -107,6 +116,37 @@ router.post(
           draftVideoUrl: result.draftVideoUrl,
         });
       }
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+/** POST /api/projects/:projectId/preview-with-color — render short segment with color, return preview URL */
+router.post(
+  "/:projectId/preview-with-color",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const projectId = paramId(req.params.projectId);
+      const body = req.body as { color?: PreviewColorInput };
+      const color: PreviewColorInput = body?.color ?? {};
+      const { previewUrl } = await renderColorPreview(projectId, req.user!.userId, color);
+      res.json({ previewUrl });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+/** POST /api/projects/:projectId/timeline-preview — one URL for full timeline preview (smooth playback). Body optional { edl }. */
+router.post(
+  "/:projectId/timeline-preview",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const projectId = paramId(req.params.projectId);
+      const body = req.body as { edl?: unknown };
+      const result = await getTimelinePreview(projectId, req.user!.userId, body?.edl);
+      res.json(result);
     } catch (e) {
       next(e);
     }

@@ -6,6 +6,8 @@ import { colors } from '../../theme/colors';
 
 type Props = {
   playUrl: string | null;
+  /** Optional URL to preload (e.g. next clip) so switching to it has less delay. */
+  preloadUrl?: string | null;
   playing: boolean;
   onPlayingChange: (playing: boolean) => void;
   onTimeUpdate: (sec: number) => void;
@@ -16,6 +18,7 @@ type Props = {
 
 export function EdlDraftPlayer({
   playUrl,
+  preloadUrl,
   playing,
   onPlayingChange,
   onTimeUpdate,
@@ -32,14 +35,34 @@ export function EdlDraftPlayer({
   }
 
   return (
-    <EdlDraftPlayerInner
-      playUrl={playUrl}
-      playing={playing}
-      onPlayingChange={onPlayingChange}
-      onTimeUpdate={onTimeUpdate}
-      onDurationChange={onDurationChange}
-      seekToRef={seekToRef}
-    />
+    <View style={styles.container}>
+      <EdlDraftPlayerInner
+        playUrl={playUrl}
+        playing={playing}
+        onPlayingChange={onPlayingChange}
+        onTimeUpdate={onTimeUpdate}
+        onDurationChange={onDurationChange}
+        seekToRef={seekToRef}
+      />
+      {preloadUrl && preloadUrl !== playUrl ? (
+        <View style={styles.preloadWrap} pointerEvents="none">
+          <PreloadVideoView url={preloadUrl} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Hidden player that only loads the URL to warm the cache for when we switch to it. */
+function PreloadVideoView({ url }: { url: string }) {
+  const player = useVideoPlayer(url, (p) => {
+    p.loop = false;
+    p.muted = true;
+  });
+  return (
+    <View style={styles.preloadVideo}>
+      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" nativeControls={false} />
+    </View>
   );
 }
 
@@ -108,6 +131,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     borderRadius: 12,
     overflow: 'hidden',
+  },
+  preloadWrap: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    opacity: 0,
+    overflow: 'hidden',
+  },
+  preloadVideo: {
+    width: 1,
+    height: 1,
   },
   placeholder: {
     justifyContent: 'center',

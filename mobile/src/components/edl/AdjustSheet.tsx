@@ -3,7 +3,7 @@
  * Drag handle, "Apply to all clips" row, tabs, slider controls, confirm action.
  */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeViewGestureHandler } from 'react-native-gesture-handler';
 import Slider from '@react-native-community/slider';
@@ -15,7 +15,7 @@ import BottomSheet, {
   TouchableOpacity,
 } from '@gorhom/bottom-sheet';
 import type { BottomSheetBackdropProps } from '@gorhom/bottom-sheet';
-import { Check } from 'lucide-react-native';
+import { Check, RotateCcw } from 'lucide-react-native';
 import { colors } from '../../theme/colors';
 import type { EDL, EdlColor } from '../../lib/edlLib';
 
@@ -77,7 +77,7 @@ function RenderBackdrop(props: BottomSheetBackdropProps) {
       {...props}
       appearsOnIndex={0}
       disappearsOnIndex={-1}
-      opacity={0.5}
+      opacity={0.2}
       pressBehavior="close"
     />
   );
@@ -85,13 +85,16 @@ function RenderBackdrop(props: BottomSheetBackdropProps) {
 
 export function AdjustSheet({ visible, onClose, edl, onEdlChange }: Props) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheetRef | null>(null);
   const color = edl?.color ?? DEFAULT_COLOR;
   const [activeTab, setActiveTab] = useState<AdjustTab>('Adjust');
   const [applyToAllClips, setApplyToAllClips] = useState(true);
 
-  const snapPoints = useMemo(() => ['65%'], []);
+  const snapPoints = useMemo(() => ['50%'], []);
   const sheetIndex = visible ? 0 : -1;
+  // Match scroll content height to sheet snap so the sheet doesn't resize when switching to "coming soon" tabs.
+  const tabContentMinHeight = Math.round(windowHeight * 0.5);
 
   const setColor = useCallback(
     (key: keyof EdlColor, value: number) => {
@@ -105,6 +108,10 @@ export function AdjustSheet({ visible, onClose, edl, onEdlChange }: Props) {
     (bottomSheetRef.current as BottomSheetRef | null)?.close?.();
     onClose();
   }, [onClose]);
+
+  const handleResetColor = useCallback(() => {
+    onEdlChange({ color: { ...DEFAULT_COLOR } });
+  }, [onEdlChange]);
 
   const handleChange = useCallback(
     (index: number) => {
@@ -123,6 +130,7 @@ export function AdjustSheet({ visible, onClose, edl, onEdlChange }: Props) {
       index={sheetIndex}
       snapPoints={snapPoints}
       enablePanDownToClose
+      enableContentPanningGesture={false}
       onChange={handleChange}
       handleComponent={(props) => (
         <BottomSheetHandle {...props} style={styles.handle} indicatorStyle={styles.handleIndicator} />
@@ -176,76 +184,94 @@ export function AdjustSheet({ visible, onClose, edl, onEdlChange }: Props) {
           ))}
         </View>
 
-        {activeTab === 'Adjust' && (
-          <BottomSheetScrollView
-            style={styles.scroll}
-            contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + insets.bottom }]}
-            showsVerticalScrollIndicator={false}
-          >
-            <AdjustmentRow
-            label="Exposure"
-            value={1}
-            min={0.5}
-            max={2}
-            onChange={() => {}}
-          />
-          <AdjustmentRow
-            label="Clarity"
-            value={1}
-            min={0.5}
-            max={2}
-            onChange={() => {}}
-          />
-          <AdjustmentRow
-            label="Highlights"
-            value={1}
-            min={0}
-            max={2}
-            onChange={() => {}}
-          />
-          <AdjustmentRow
-            label="Shadows"
-            value={1}
-            min={0}
-            max={2}
-            onChange={() => {}}
-          />
-          <AdjustmentRow
-            label="Contrast"
-            value={con}
-            min={0.5}
-            max={2}
-            onChange={(v) => setColor('contrast', v)}
-          />
-          <AdjustmentRow
-            label="Brightness"
-            value={1}
-            min={0.5}
-            max={2}
-            onChange={() => {}}
-          />
-          <AdjustmentRow
-            label="Saturation"
-            value={sat}
-            min={0.5}
-            max={2}
-            onChange={(v) => setColor('saturation', v)}
-          />
-          <AdjustmentRow
-            label="Vibrance"
-            value={vib}
-            min={0.5}
-            max={2}
-            onChange={(v) => setColor('vibrance', v)}
-          />
-          </BottomSheetScrollView>
-        )}
+        <BottomSheetScrollView
+          style={styles.scroll}
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingBottom: Math.max(220, 80 + insets.bottom),
+              minHeight: tabContentMinHeight,
+            },
+          ]}
+          showsVerticalScrollIndicator={true}
+        >
+          {activeTab === 'Adjust' && (
+            <>
+              <View style={styles.previewHintWrap}>
+                <TouchableOpacity
+                  style={styles.resetColorBtn}
+                  onPress={handleResetColor}
+                  activeOpacity={0.8}
+                >
+                  <RotateCcw size={18} color={colors.primary} />
+                  <Text style={styles.resetColorBtnText}>Reset</Text>
+                </TouchableOpacity>
+              </View>
+              <AdjustmentRow
+                label="Exposure"
+                value={1}
+                min={0.5}
+                max={2}
+                onChange={() => {}}
+              />
+              <AdjustmentRow
+                label="Clarity"
+                value={1}
+                min={0.5}
+                max={2}
+                onChange={() => {}}
+              />
+              <AdjustmentRow
+                label="Highlights"
+                value={1}
+                min={0}
+                max={2}
+                onChange={() => {}}
+              />
+              <AdjustmentRow
+                label="Shadows"
+                value={1}
+                min={0}
+                max={2}
+                onChange={() => {}}
+              />
+              <AdjustmentRow
+                label="Contrast"
+                value={con}
+                min={0}
+                max={2}
+                onChange={(v) => setColor('contrast', v)}
+              />
+              <AdjustmentRow
+                label="Brightness"
+                value={1}
+                min={0}
+                max={2}
+                onChange={() => {}}
+              />
+              <AdjustmentRow
+                label="Saturation"
+                value={sat}
+                min={0}
+                max={2}
+                onChange={(v) => setColor('saturation', v)}
+              />
+              <AdjustmentRow
+                label="Vibrance"
+                value={vib}
+                min={0}
+                max={2}
+                onChange={(v) => setColor('vibrance', v)}
+              />
+            </>
+          )}
 
-        {(activeTab === 'White balance' || activeTab === 'HSL' || activeTab === 'Style') && (
-          <BottomSheetView style={styles.placeholder}>
-            <Text style={styles.placeholderText}>{activeTab} — coming soon</Text>
-          </BottomSheetView>
-        )}
+          {(activeTab === 'White balance' || activeTab === 'HSL' || activeTab === 'Style') && (
+            <View style={[styles.placeholder, { minHeight: tabContentMinHeight - 56 }]}>
+              <Text style={styles.placeholderText}>{activeTab} — coming soon</Text>
+            </View>
+          )}
+        </BottomSheetScrollView>
       </View>
     </BottomSheet>
   );
@@ -337,6 +363,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 4,
   },
+  previewHintWrap: {
+    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+  },
+  previewHintText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  previewHintValues: {
+    fontSize: 12,
+    color: colors.primary,
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  resetColorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 8,
+  },
+  resetColorBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.primary,
+  },
   controlRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -361,6 +419,7 @@ const styles = StyleSheet.create({
   placeholder: {
     padding: 24,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   placeholderText: {
     fontSize: 15,

@@ -114,6 +114,24 @@ export function resolutionToOutput(resolution: ExportResolution): { width: numbe
 
 export const HISTORY_MAX = 50;
 
+/** Get the clip at the given timeline time (playhead). Returns index, clip, and time within the clip source (inSec..outSec) to seek to. */
+export function getClipAtPlayhead(
+  timeline: EdlTimelineClip[],
+  playheadSec: number
+): { index: number; clip: EdlTimelineClip; inClipTime: number } | null {
+  if (!timeline?.length) return null;
+  for (let i = 0; i < timeline.length; i++) {
+    const clip = timeline[i];
+    const duration = Math.max(0.04, clip.outSec - clip.inSec);
+    const segEnd = clip.startSec + duration;
+    if (playheadSec >= clip.startSec && playheadSec < segEnd) {
+      const inClipTime = clip.inSec + (playheadSec - clip.startSec);
+      return { index: i, clip, inClipTime };
+    }
+  }
+  return null;
+}
+
 /** Split timeline at playhead (timeline time). Playhead must be inside clip. Returns null if invalid. */
 export function splitTimelineAtPlayhead(
   timeline: EdlTimelineClip[],

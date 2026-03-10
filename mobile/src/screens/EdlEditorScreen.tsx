@@ -51,6 +51,7 @@ import {
   type EdlTimelineClip,
   type EdlTextOverlay,
   ensureEdlIds,
+  getClipAtPlayhead,
   parseS3Key,
   resolutionToOutput,
   HISTORY_MAX,
@@ -107,7 +108,14 @@ export function EdlEditorScreen() {
   /** Per-clip thumbnail URI; undefined = still loading, null = failed/no url, string = ready */
   const [resolvedThumbnailUrls, setResolvedThumbnailUrls] = useState<(string | null | undefined)[]>([]);
   const [resolvedAudioUrl, setResolvedAudioUrl] = useState<string | null>(null);
-  const [playUrl, setPlayUrl] = useState<string | null>(null);
+  /** Draft/render video URL (fallback when no clip at playhead). */
+  const [draftVideoUrl, setDraftVideoUrl] = useState<string | null>(null);
+  /** Color-preview URL when Adjust sheet is open; takes precedence over clip/draft. */
+  const [colorPreviewUrl, setColorPreviewUrl] = useState<string | null>(null);
+  /** Backend-generated timeline preview URL (cached); null when not ready or invalidated. */
+  const [timelinePreviewUrl, setTimelinePreviewUrl] = useState<string | null>(null);
+  const [timelinePreviewLoading, setTimelinePreviewLoading] = useState(false);
+  const [previewInvalidated, setPreviewInvalidated] = useState(true);
 
   const [playheadSec, setPlayheadSec] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -119,6 +127,25 @@ export function EdlEditorScreen() {
   const maxTimelineSec = edl
     ? edl.timeline.reduce((a, c) => a + Math.max(0.04, c.outSec - c.inSec), 0)
     : 0;
+
+  /** Clip at playhead (for playhead-based preview). */
+  const clipAtPlayhead = edl?.timeline?.length && playheadSec >= 0
+    ? getClipAtPlayhead(edl.timeline, playheadSec)
+    : null;
+  const clipPlayUrl = clipAtPlayhead != null && resolvedClipUrls[clipAtPlayhead.index]
+    ? resolvedClipUrls[clipAtPlayhead.index]
+    : null;
+  /** URL passed to the preview player: timeline preview > color preview > clip at playhead > draft. */
+  const effectivePlayUrl = timelinePreviewUrl ?? colorPreviewUrl ?? clipPlayUrl ?? draftVideoUrl;
+
+  /** Next clip URL for preloading (reduces pause when switching to the next clip). */
+  const nextClipUrl =
+    clipAtPlayhead != null &&
+    edl?.timeline &&
+    clipAtPlayhead.index + 1 < edl.timeline.length &&
+    resolvedClipUrls[clipAtPlayhead.index + 1]
+      ? resolvedClipUrls[clipAtPlayhead.index + 1]
+      : null;
 
   useEffect(() => {
     if (maxTimelineSec > 0 && playheadSec > maxTimelineSec) {
@@ -190,7 +217,8 @@ export function EdlEditorScreen() {
     let cancelled = false;
     const resolve = async (clipUrl: string): Promise<string | null> => {
       if (clipUrl.startsWith('http')) return clipUrl;
-      const key = parseS3Key(clipUrl);
+      // Support both s3://bucket/key and bare storage keys (e.g. from add-clip upload)
+      const key = parseS3Key(clipUrl) ?? clipUrl.trim();
       if (!key) return null;
       try {
         const res = await storageApi.playUrl(key);
@@ -298,25 +326,71 @@ export function EdlEditorScreen() {
         const draftUrl = project.draftVideoUrl ?? null;
         if (cancelled || !draftUrl) return;
         if (draftUrl.startsWith('http')) {
-          setPlayUrl(draftUrl);
+          setDraftVideoUrl(draftUrl);
           return;
         }
-        const key = parseS3Key(draftUrl);
+        const key = parseS3Key(draftUrl) ?? draftUrl.trim();
         if (!key) {
-          setPlayUrl(null);
+          setDraftVideoUrl(null);
           return;
         }
         return storageApi.playUrl(key).then((res) => {
-          if (!cancelled) setPlayUrl(res.url);
+          if (!cancelled) setDraftVideoUrl(res.url);
         });
       })
       .catch(() => {
-        if (!cancelled) setPlayUrl(null);
+        if (!cancelled) setDraftVideoUrl(null);
       });
     return () => {
       cancelled = true;
     };
   }, [projectId]);
+
+  // Timeline preview: one URL for smooth playback (CapCut-like). Request when we have EDL; refetch when invalidated (e.g. after save).
+  const TIMELINE_PREVIEW_TIMEOUT_MS = 90_000; // 90s so backend has time to render; prevents loading from hanging forever
+  useEffect(() => {
+    if (!projectId || !edl?.timeline?.length || timelinePreviewLoading) return;
+    if (!previewInvalidated && timelinePreviewUrl) return;
+    setTimelinePreviewLoading(true);
+    setPreviewInvalidated(false);
+    let cancelled = false;
+    const startMs = Date.now();
+    console.log('[Timeline preview] Starting request…', { projectId, clipCount: edl?.timeline?.length });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('timeline preview timeout')), TIMELINE_PREVIEW_TIMEOUT_MS);
+    });
+    const requestPromise = projectsApi
+      .getTimelinePreview(projectId, edl as unknown as Record<string, unknown>)
+      .then((res) => {
+        if (cancelled) return;
+        const url = res.previewUrl;
+        if (url.startsWith('http')) {
+          setTimelinePreviewUrl(url);
+          const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
+          console.log('[Timeline preview] Ready (direct URL)', { elapsedSec: `${elapsedSec}s` });
+          return;
+        }
+        const key = parseS3Key(url) ?? url.trim();
+        if (!key) return;
+        return storageApi.playUrl(key).then((r) => {
+          if (!cancelled) setTimelinePreviewUrl(r.url);
+          const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
+          console.log('[Timeline preview] Ready (after playUrl)', { elapsedSec: `${elapsedSec}s` });
+        });
+      });
+    Promise.race([requestPromise, timeoutPromise])
+      .catch((err) => {
+        const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
+        console.log('[Timeline preview] Failed or timeout', { elapsedSec: `${elapsedSec}s`, error: err?.message ?? String(err) });
+        if (!cancelled) setTimelinePreviewUrl(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTimelinePreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, previewInvalidated, !!edl?.timeline?.length, timelinePreviewLoading, timelinePreviewUrl]);
 
   const updateEdl = useCallback((patch: Partial<EDL> | ((prev: EDL) => EDL)) => {
     setEdl((prev) => {
@@ -596,7 +670,7 @@ export function EdlEditorScreen() {
     }
     if (totalBytes == null) {
       try {
-        const info = await FileSystem.getInfoAsync(asset.uri, { size: true });
+        const info = await FileSystem.getInfoAsync(asset.uri, { size: true } as FileSystem.InfoOptions);
         if (info.exists && 'size' in info && typeof info.size === 'number') totalBytes = info.size;
       } catch {
         // ignore
@@ -765,6 +839,8 @@ export function EdlEditorScreen() {
     try {
       await projectsApi.updateEdl(projectId, edl as unknown as Record<string, unknown>);
       setDirty(false);
+      setPreviewInvalidated(true);
+      setTimelinePreviewUrl(null);
       Alert.alert('Saved', 'EDL saved successfully.');
     } catch (e) {
       Alert.alert('Error', (e as Error).message);
@@ -800,7 +876,7 @@ export function EdlEditorScreen() {
             setRenderStatus('done');
             setRenderProgress(100);
             setOutputVideoUrl(res.draftVideoUrl);
-            setPlayUrl(res.draftVideoUrl.startsWith('http') ? res.draftVideoUrl : null);
+            setDraftVideoUrl(res.draftVideoUrl.startsWith('http') ? res.draftVideoUrl : null);
           }
         })
         .catch((e) => {
@@ -826,14 +902,14 @@ export function EdlEditorScreen() {
   useEffect(() => {
     if (renderStatus !== 'done' || !outputVideoUrl) return;
     if (outputVideoUrl.startsWith('http')) {
-      setPlayUrl(outputVideoUrl);
+      setDraftVideoUrl(outputVideoUrl);
       return;
     }
-    const key = parseS3Key(outputVideoUrl);
+    const key = parseS3Key(outputVideoUrl) ?? outputVideoUrl.trim();
     if (!key) return;
     let cancelled = false;
     storageApi.playUrl(key).then((res) => {
-      if (!cancelled) setPlayUrl(res.url);
+      if (!cancelled) setDraftVideoUrl(res.url);
     });
     return () => {
       cancelled = true;
@@ -852,7 +928,6 @@ export function EdlEditorScreen() {
           setRenderStatus(data.status);
           if (data.status === 'done' && data.outputVideoUrl) {
             setOutputVideoUrl(data.outputVideoUrl);
-            setPlayUrl(data.outputVideoUrl);
           }
           if (data.status === 'failed') setRenderError('Render failed');
         })
@@ -870,6 +945,45 @@ export function EdlEditorScreen() {
       clearInterval(id);
     };
   }, [activeJobId, renderStatus]);
+
+  // When Adjust sheet closes, clear color preview so player falls back to clip/draft.
+  useEffect(() => {
+    if (activeTool !== 'adjust') setColorPreviewUrl(null);
+  }, [activeTool]);
+
+  // Debounced "preview with color": when Adjust sheet is open and color changes, request a short segment with current color and set preview URL.
+  const adjustSheetOpenRef = useRef(false);
+  useEffect(() => {
+    const isAdjust = activeTool === 'adjust';
+    adjustSheetOpenRef.current = isAdjust;
+    if (!isAdjust || !projectId || !edl?.color || !edl.timeline?.length) return;
+    const t = setTimeout(() => {
+      projectsApi
+        .previewWithColor(projectId, {
+          saturation: edl.color!.saturation,
+          contrast: edl.color!.contrast,
+          vibrance: edl.color!.vibrance,
+        })
+        .then((res) => {
+          if (!adjustSheetOpenRef.current) return;
+          const url = res.previewUrl;
+          if (url.startsWith('http')) {
+            setColorPreviewUrl(url);
+            return;
+          }
+          const key = parseS3Key(url) ?? url.trim();
+          if (!key) return;
+          return storageApi.playUrl(key).then((r) => {
+            if (adjustSheetOpenRef.current) setColorPreviewUrl(r.url);
+          });
+        })
+        .catch(() => {});
+    }, 1500);
+    return () => {
+      adjustSheetOpenRef.current = false;
+      clearTimeout(t);
+    };
+  }, [activeTool, projectId, edl?.color?.saturation, edl?.color?.contrast, edl?.color?.vibrance, edl?.timeline?.length]);
 
   const dismissRenderProgress = useCallback(() => {
     setActiveJobId(null);
@@ -989,17 +1103,28 @@ export function EdlEditorScreen() {
           {/* §18.10.1: Video preview — flex so it uses remaining space; maxHeight so it fits on one screen */}
           <View style={[styles.previewWrap, { maxHeight: previewMaxHeight }]}>
             <EdlDraftPlayer
-              playUrl={playUrl}
+              playUrl={effectivePlayUrl}
+              preloadUrl={timelinePreviewUrl == null && effectivePlayUrl === clipPlayUrl ? nextClipUrl : null}
               playing={playing}
               onPlayingChange={setPlaying}
               onTimeUpdate={(currentTime) => {
+                const timelineSec =
+                  clipAtPlayhead != null && effectivePlayUrl === clipPlayUrl
+                    ? clipAtPlayhead.clip.startSec + currentTime
+                    : currentTime;
                 const maxSec = maxTimelineSec > 0 ? maxTimelineSec : videoDuration;
-                const clamped = maxSec > 0 ? Math.max(0, Math.min(maxSec, currentTime)) : currentTime;
+                const clamped = maxSec > 0 ? Math.max(0, Math.min(maxSec, timelineSec)) : timelineSec;
                 setPlayheadSec(clamped);
               }}
               onDurationChange={setVideoDuration}
               seekToRef={seekToRef}
             />
+            {timelinePreviewLoading && !timelinePreviewUrl ? (
+              <View style={styles.preparingPreviewOverlay} pointerEvents="none">
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={styles.preparingPreviewText}>Preparing preview…</Text>
+              </View>
+            ) : null}
           </View>
 
           {/* §18.10.2: Playback controls — playhead clamped to content end (maxTimelineSec) */}
@@ -1007,7 +1132,7 @@ export function EdlEditorScreen() {
           <TouchableOpacity
             style={styles.playPauseBtn}
             onPress={() => setPlaying((p) => !p)}
-            disabled={!playUrl}
+            disabled={!effectivePlayUrl}
           >
             {playing ? (
               <Pause color={colors.text} size={24} />
@@ -1128,9 +1253,11 @@ export function EdlEditorScreen() {
               setOverlayTrim(overlayIndex, field, value);
             }}
             onSeek={(sec) => {
-              const snapped = snapPlayheadToGrid(sec, edl.timeline.reduce((a, c) => a + Math.max(0.04, c.outSec - c.inSec), 0));
+              const maxSec = edl.timeline.reduce((a, c) => a + Math.max(0.04, c.outSec - c.inSec), 0);
+              const snapped = snapPlayheadToGrid(sec, maxSec);
               setPlayheadSec(snapped);
-              seekToRef.current = snapped;
+              const at = getClipAtPlayhead(edl.timeline, snapped);
+              seekToRef.current = at != null ? at.inClipTime : snapped;
             }}
             trackVisibility={trackVisibility}
             onTrackVisibilityChange={(track: TrackId, visible: boolean) => {
@@ -1336,6 +1463,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 12,
     overflow: 'hidden',
+  },
+  preparingPreviewOverlay: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+  },
+  preparingPreviewText: {
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '500',
   },
   timelineSection: {
     minHeight: 200,

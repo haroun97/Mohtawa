@@ -149,7 +149,10 @@ export async function getPresignedPlayUrl(
 }
 
 /**
- * Resolve stored asset URL to a buffer. Supports s3://bucket/key (GetObject) or https:// (fetch).
+ * Resolve stored asset URL to a buffer. Supports:
+ * - s3://bucket/key (GetObject)
+ * - https:// (fetch)
+ * - Bare S3 key (e.g. video-assets/... from EDL clipUrl when mobile stores key instead of full URL)
  */
 export async function getBufferFromStoredUrl(url: string): Promise<Buffer> {
   if (url.startsWith("s3://")) {
@@ -167,5 +170,6 @@ export async function getBufferFromStoredUrl(url: string): Promise<Buffer> {
     const arrayBuffer = await res.arrayBuffer();
     return Buffer.from(arrayBuffer);
   }
-  throw new Error(`Unsupported asset URL scheme: ${url.slice(0, 50)}...`);
+  // Bare S3 key (e.g. video-assets/... from EDL clipUrl)
+  return getObjectFromS3(url);
 }

@@ -133,6 +133,12 @@ export const projectsApi = {
     apiClient.post<{ status: string; jobId?: string; draftVideoUrl?: string; message?: string }>(
       `/projects/${projectId}/render-draft`
     ),
+  /** Render short segment with current color; returns playable preview URL. */
+  previewWithColor: (projectId: string, color: { saturation?: number; contrast?: number; vibrance?: number }) =>
+    apiClient.post<{ previewUrl: string }>(`/projects/${projectId}/preview-with-color`, { color }),
+  /** Single timeline-preview stream (smooth playback). Optional body { edl }. Returns { status: 'ready', previewUrl }. */
+  getTimelinePreview: (projectId: string, edl?: Record<string, unknown>) =>
+    apiClient.post<{ status: string; previewUrl: string }>(`/projects/${projectId}/timeline-preview`, edl != null ? { edl } : {}),
 };
 
 /** Render status — same as frontend */

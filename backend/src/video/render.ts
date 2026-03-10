@@ -21,6 +21,8 @@ export interface RenderDraftOptions {
   getBufferFromUrl?: (url: string) => Promise<Buffer>;
   /** When true, use lower bitrate for faster preview (e.g. 4Mbps). */
   isDraft?: boolean;
+  /** When set, only render the first N seconds (for fast color-preview). */
+  maxDurationSec?: number;
   /** Called during final mux with progress 0..1 and current output time in seconds. */
   onProgress?: (percent: number, currentTimeSec: number) => void;
   /** Called with JPEG buffer for live preview frame; throttle to ~1/s. */
@@ -176,8 +178,28 @@ function getAudioVolumes(edl: EDL): { voice: number; music: number } {
  * Render draft preview from EDL: fetch clips, trim, concat, add voiceover, scale to output size.
  * Supports reorder (by startSec), color filters, music mix, draft vs final bitrate.
  */
+/** Trim timeline to at most maxDurationSec: drop segments after, trim last segment. */
+function trimTimelineToMaxDuration<T extends { startSec: number; inSec: number; outSec: number }>(
+  timeline: T[],
+  maxDurationSec: number,
+): T[] {
+  const out: T[] = [];
+  for (const seg of timeline) {
+    if (seg.startSec >= maxDurationSec) break;
+    const segDuration = Math.max(0.04, seg.outSec - seg.inSec);
+    const endSec = seg.startSec + segDuration;
+    const cap = Math.min(segDuration, maxDurationSec - seg.startSec);
+    if (cap <= 0) break;
+    out.push({
+      ...seg,
+      outSec: seg.inSec + cap,
+    } as T);
+  }
+  return out;
+}
+
 export async function renderDraftFromEDL(options: RenderDraftOptions): Promise<Buffer> {
-  const { edl, voiceoverBuffer, getBufferFromUrl, isDraft, onProgress, uploadPreviewFrame } = options;
+  const { edl, voiceoverBuffer, getBufferFromUrl, isDraft, maxDurationSec, onProgress, uploadPreviewFrame } = options;
   if (!isFfmpegAvailable() || !getBufferFromUrl) {
     return MINIMAL_MP4;
   }
@@ -185,7 +207,11 @@ export async function renderDraftFromEDL(options: RenderDraftOptions): Promise<B
     return MINIMAL_MP4;
   }
 
-  const timeline = sortTimelineByStart(edl.timeline);
+  const rawTimeline = sortTimelineByStart(edl.timeline);
+  const timeline = maxDurationSec != null && maxDurationSec > 0
+    ? trimTimelineToMaxDuration(rawTimeline, maxDurationSec)
+    : rawTimeline;
+  if (timeline.length === 0) return MINIMAL_MP4;
   const videoBitrate = isDraft ? "4M" : "10M";
 
   const tmpDir = mkdtempSync(join(tmpdir(), "mohtawa-render-"));
@@ -271,6 +297,9 @@ export async function renderDraftFromEDL(options: RenderDraftOptions): Promise<B
         ? runFfmpegWithProgress(args, durationSec, progressCb, tmpDir)
         : runFfmpeg(args, tmpDir);
 
+    const durationLimitArgs =
+      maxDurationSec != null && maxDurationSec > 0 ? ["-t", String(maxDurationSec)] : [];
+
     const { voice: voiceVol, music: musicVol } = getAudioVolumes(edl);
     const musicEnabled = edl.audio.musicEnabled === true && edl.audio.musicUrl;
     let musicBuffer: Buffer | null = null;
@@ -299,6 +328,7 @@ export async function renderDraftFromEDL(options: RenderDraftOptions): Promise<B
         "-map", "0:v",
         "-map", "1:a",
         "-shortest",
+        ...durationLimitArgs,
         draftPath,
       ]);
     } else if (musicEnabled && musicBuffer && musicBuffer.length > 0) {
@@ -324,6 +354,7 @@ export async function renderDraftFromEDL(options: RenderDraftOptions): Promise<B
           "-c:a", "aac",
           "-b:a", "128k",
           "-shortest",
+          ...durationLimitArgs,
           draftPath,
         ]);
       } else {
@@ -353,6 +384,7 @@ export async function renderDraftFromEDL(options: RenderDraftOptions): Promise<B
         "-b:v", videoBitrate,
         "-pix_fmt", "yuv420p",
         "-an",
+        ...durationLimitArgs,
         draftPath,
       ]);
     }

@@ -1920,4 +1920,122 @@ Both run in the same synchronous turn after `await promise` resolves. So we sche
 
 ---
 
+#### 18.10.23 Mobile editor: adjustments, sheet scroll, confirm, new-clip playback and thumbnails (full investigation)
+
+**Purpose:** Single deep investigation covering: (1) adjust parameters not visible on preview and not “applying”, (2) Adjust sheet scrolling the whole sheet instead of only inner content, (3) blue confirm button not applying/closing, (4) newly added videos not playable, (5) newly added videos without thumbnails. No implementation — planning doc only, with root causes and recommended UX/implementation directions.
+
+**Status:** Investigation only; no implementation.
+
+---
+
+##### Part 1 — Adjustments do not visibly affect the video preview
+
+| Area | Finding |
+|------|--------|
+| **Preview component** | `EdlDraftPlayer` receives only `playUrl`, `playing`, callbacks, `seekToRef`. It does **not** receive `edl` or `edl.color`. It uses `expo-video` (VideoView) with no filter/overlay API. So there is **no code path** that applies saturation, contrast, vibrance (or exposure, etc.) to the preview. |
+| **Source of playUrl** | In `EdlEditorScreen`, `playUrl` is set from: (a) **project.draftVideoUrl** on load (backend-rendered draft), or (b) **outputVideoUrl** after Export/Render. It is **never** derived from the current playhead or from `resolvedClipUrls`. So the preview always shows a **single** pre-rendered video, not a live timeline composition. |
+| **Where edl.color is used** | Slider changes call `onEdlChange({ color: next })` so `edl.color` is in local state. It is persisted to the backend on **Save** and used at **render time** in `backend/src/video/render.ts` (`buildColorFilter` → FFmpeg eq filter). So **export/render** does apply adjustments; the **editor preview** does not. |
+| **Root cause** | The preview pipeline is “one URL, no filters”. There is no client-side color pipeline (no WebGL/native filter, no per-frame processing) and no “preview render” that returns a short clip with color applied. |
+| **Best UX direction** | (1) **Short term:** Make it explicit in the UI that “Adjustments apply when you Save and Render” (tooltip or label) so users don’t expect live preview. (2) **Medium term:** If product requires live preview, either add a lightweight client-side filter (e.g. overlay or native filter if expo-video supports it) or a backend “preview color” endpoint that returns a short sample with current `edl.color` applied. (3) Ensure **Save** and **Export** both send the latest `edl` (including `color`) so exported output is correct — already the case. |
+
+---
+
+##### Part 2 — Adjust sheet scroll: whole sheet moves up and hides the preview
+
+| Area | Finding |
+|------|--------|
+| **Current config** | Adjust sheet uses `@gorhom/bottom-sheet` with `snapPoints={['65%']}`, `enablePanDownToClose`, and `BottomSheetScrollView` for the slider list. There is no explicit `enableContentPanningGesture` set. |
+| **Default behavior** | In @gorhom/bottom-sheet, **enableContentPanningGesture** defaults to **true**. When the user scrolls inside `BottomSheetScrollView`, the library can treat the gesture as **panning the sheet** (moving it up/down) instead of or in addition to scrolling the inner content. That explains “scrolling the options moves the whole sheet up” and the preview being covered. |
+| **Root cause** | Content panning is enabled, so vertical drag in the sheet is shared between the sheet’s pan and the inner ScrollView. On some devices or scroll positions the sheet wins and moves up. |
+| **Best UX direction** | (1) Set **enableContentPanningGesture={false}** on the BottomSheet so that vertical drag inside the sheet is **only** used by `BottomSheetScrollView`; the sheet itself stays at the snap point and does not move up when the user scrolls the sliders. (2) Keep a single snap point (e.g. 65%) so the sheet does not “expand” further. (3) Optionally use **simultaneousHandlers** or a dedicated scrollable so the scroll view has priority; disabling content panning is usually sufficient. |
+
+---
+
+##### Part 3 — Blue confirm button does not apply changes and does not close the sheet
+
+| Area | Finding |
+|------|--------|
+| **“Apply” semantics** | In code, the confirm button only **closes** the sheet (`onClose()` → parent sets `activeTool = null`). Slider changes are already written to `edl` via `onEdlChange` on every move; there is no separate “apply” commit. So “does not apply” can mean: (a) user expects to see preview update (Part 1), or (b) the button does not close the sheet. |
+| **Current implementation** | AdjustSheet uses `TouchableOpacity` from `@gorhom/bottom-sheet` and `handleConfirm` calls `bottomSheetRef.current?.close?.()` and `onClose()`. So both imperative close and parent state are updated. |
+| **Why it may still not close** | (1) **Touch not reaching button:** Gesture handlers (e.g. scroll/pan) can still capture the touch before it reaches the confirm button, especially after scrolling the list. (2) **NativeViewGestureHandler** wraps only the apply section; if the confirm button is inside a view that loses touches to the sheet’s pan, the press may not fire. (3) **Ref.close()** — the standard BottomSheet (non-Modal) ref may not expose `.close()`; it might use `snapToIndex(-1)`. If `ref.current.close` is undefined, only `onClose()` runs and the sheet relies on `index={-1}` to close; on some versions that may not animate or may be ignored. |
+| **Best UX direction** | (1) Use the ref’s **snapToIndex(-1)** (or the correct API for the version in use) before calling `onClose()`, so the sheet animates closed and then the parent clears `activeTool`. (2) Ensure the confirm button (and apply row) are in a view that receives touches: e.g. wrap the **confirm button** in `NativeViewGestureHandler` with `disallowInterruption={true}` so its touches are not stolen. (3) Optionally add a short “Saved” or “Applied” feedback (e.g. toast) when confirm is pressed so the user sees that the action registered. |
+
+---
+
+##### Part 4 — Newly added videos cannot be played properly
+
+| Area | Finding |
+|------|--------|
+| **Add-clip flow** | `handleAddClip` uploads the file, then creates a clip with `clipUrl: res.key` (the storage key returned by the API, e.g. `userId/uploads/xxx_clip.mp4` or fullKey with prefix). The timeline is updated and `resolvedClipUrls` is updated by a `useEffect` that runs when `edl.timeline` changes. |
+| **Resolve logic** | The effect that sets `resolvedClipUrls` uses `resolve(clipUrl)` per clip. Inside `resolve`: if `clipUrl.startsWith('http')` it returns the URL; otherwise it does `parseS3Key(clipUrl)` to get a key. **parseS3Key** returns non-null only when the string **starts with `s3://`**. The media upload API returns `{ key, url }` where `key` is a **bare key** (e.g. `video-assets/userId/uploads/xxx.mp4`), not an `s3://` URL. So for newly added clips, `clipUrl` is that bare key, **parseS3Key returns null**, and the resolve function **returns null** without calling `storageApi.playUrl`. So **new clips get null in resolvedClipUrls**. |
+| **Consequence** | Null resolved URL means: (a) the timeline clip has no playable URL for that index; (b) the player never gets a “current clip” URL for the new clip (see below); (c) thumbnail generation skips that clip (no URL to generate from). |
+| **Preview playUrl** | Even if we fix resolve, **playUrl** in the editor is **not** derived from the playhead. It is set only from **draftVideoUrl** (project) or **outputVideoUrl** (after render). So the preview does not switch to “current clip by playhead” when the user has multiple clips or adds a new one. Playback “of the new clip” would require either: (a) deriving `playUrl` from the clip at the current playhead (using `resolvedClipUrls[clipIndexAt(playheadSec)]` and seeking to the in-clip time), or (b) keeping the current “draft only” preview and documenting that playback is for the last rendered draft. |
+| **Best UX direction** | (1) **Fix resolve:** Treat any non-http `clipUrl` as a **storage key** and call `storageApi.playUrl(clipUrl)` directly (do not require `s3://` prefix). That way newly added clips (with `clipUrl = res.key`) get a presigned URL and `resolvedClipUrls` is populated. (2) **Playhead-based preview (optional):** Compute the clip index at `playheadSec` and set `playUrl` to `resolvedClipUrls[thatIndex]` (and seek to the correct in-clip time) so that pressing Play plays the timeline, including newly added clips. (3) Ensure new clips have valid `clipUrl`, `inSec`, `outSec`, `startSec`, `sourceDurationSec` so that once URLs resolve, playback and trimming work. |
+
+---
+
+##### Part 5 — Newly added videos do not get proper thumbnails
+
+| Area | Finding |
+|------|--------|
+| **Thumbnail pipeline** | A `useEffect` generates thumbnails per clip: for each index `i`, if `resolvedClipUrls[i]` is a string URL, it calls `VideoThumbnails.getThumbnailAsync(url, { time: 0 })` and stores the result in `resolvedThumbnailUrls[i]`. If the URL is null or missing, that clip is skipped (or set to null). |
+| **Dependency** | Thumbnails depend on **resolvedClipUrls**. For new clips, as established in Part 4, `resolvedClipUrls[i]` is **null** because the resolve logic does not handle bare keys. So the thumbnail effect never gets a valid URL for the new clip and the clip appears blank or with a placeholder. |
+| **Root cause** | Same as Part 4: resolve returns null for bare-key `clipUrl`. Fixing the resolve logic (treat bare key as storage key and call `storageApi.playUrl(clipUrl)`) will allow new clips to get resolved URLs and then thumbnails will be generated for them. |
+| **Best UX direction** | (1) Fix the clip URL resolve logic as in Part 4. (2) Keep the existing “loading” placeholder (e.g. “Preparing…” or spinner) for clips whose `resolvedThumbnailUrls[i]` is still undefined until the thumbnail is ready. (3) Ensure the thumbnail effect runs when `resolvedClipUrls` gains a new non-null entry (it already depends on `resolvedClipUrls`). |
+
+---
+
+##### Part 6 — Summary and implementation order (no code changes here)
+
+| # | Issue | Root cause | Recommended fix (when implementing) |
+|---|--------|------------|-------------------------------------|
+| 1 | Adjust not visible on preview | Preview has no color pipeline; playUrl is draft/export only | Document “Apply on Save/Render”; **Real-time / preview-with-color: not done** (optional; would need backend preview-with-color or native GPU filter). |
+| 2 | Sheet scroll moves whole sheet | enableContentPanningGesture defaults true | Set enableContentPanningGesture={false} on BottomSheet |
+| 3 | Confirm button not closing | Touches or ref.close/snapToIndex | Use ref.snapToIndex(-1) + onClose(); ensure confirm in NativeViewGestureHandler if needed |
+| 4 | New clips not playable | resolve() uses parseS3Key so bare key → null; playUrl not from timeline | Resolve: use clipUrl as key when not http; optionally set playUrl from clip at playhead |
+| 5 | New clips no thumbnails | resolvedClipUrls null for new clips (same resolve bug) | Same resolve fix as #4; thumbnails will then generate |
+
+**Constraints:** Do not break trim, split, duplicate, delete, slip, voice waveform, or music layer. Keep adjustments in EDL and in backend render (already correct).
+
+---
+
+##### Part 7 — Timeline preview stream: recommended scalable solution (CapCut/iEdit-like UX)
+
+**Goal:** Smooth timeline playback for all clips (S3 and newly added), with one continuous preview and no per-clip URL switching.
+
+**Best scalable solution:** Backend-generated **single timeline-preview stream** (one URL per timeline state), cached and served via existing storage/CDN.
+
+**Best UX (like CapCut/iEdit):** The app uses **that one URL** for preview; no per-clip URL switching; smooth playback for all clips (S3 and new); optional “Preparing preview…” state, then smooth play.
+
+**Plan (design only):**
+
+1. **Backend**
+   - New endpoint (e.g. `GET` or `POST` `/api/projects/:id/timeline-preview`) that accepts current EDL (or projectId and uses stored EDL).
+   - Reuse existing render pipeline (or a lighter “preview” variant): fetch clips, concat in timeline order, apply trim/color/audio as today.
+   - Output **one** playable asset:
+     - **Option A:** Short-lived **HLS** (or DASH) manifest + segments (e.g. 2–10 min) → client gets one stream URL.
+     - **Option B:** Single **MP4** at preview quality (e.g. 720p, lower bitrate), optional max duration (e.g. first N minutes or full timeline).
+   - Return **one URL** (manifest or MP4) for the mobile app to use as the **only** preview source.
+   - **Caching:** Cache key = e.g. `projectId` + hash of EDL (clip order, trim, color). TTL e.g. 15–60 min or invalidate on EDL save. Store in existing object storage; CDN in front for scale.
+
+2. **Mobile app**
+   - **Preview source = single timeline-preview URL.** No clip-by-clip URL switching; no “clip at playhead” as primary preview.
+   - On “Play” or when opening the editor: request timeline preview (projectId + EDL or hash). Get back `{ previewUrl?, status: "ready" | "generating" }`.
+   - If `status === "ready"`: set player source = `previewUrl`; play/seek as one video.
+   - If `status === "generating"`: show “Preparing preview…” and poll (or webhook) until ready, then set `previewUrl`.
+   - **Fallback:** Keep current clip-at-playhead behaviour only when preview is disabled or fails (e.g. no network, or preview generation failed).
+
+3. **Scalability**
+   - Same preview URL reused for many playbacks; CDN + object storage scale.
+   - Preview length can be capped (e.g. first N minutes) or segmented (HLS) for long timelines.
+   - All clips (S3 and newly added) are inputs to one render; no special case.
+
+4. **UX outcome**
+   - One stream = no stalls at clip boundaries; same behaviour for S3 and phone-added clips.
+   - Optional “Preparing preview…” then smooth play; matches CapCut/iEdit-style “cache then play” model.
+
+**Constraints:** Do not remove existing draft/render flow; timeline preview is an additional path. When implementing, preserve trim, split, duplicate, delete, slip, and export behaviour.
+
+---
+
 *End of PLANNING-MOBILE.md*
